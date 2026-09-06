@@ -250,6 +250,39 @@ leagueRoutes.get("/:id", async (c) => {
   });
 });
 
+leagueRoutes.delete("/:id", async (c) => {
+  const leagueId = c.req.param("id");
+  const user = c.get("user");
+
+  const league = await c.env.DB.prepare("SELECT commissioner_id FROM leagues WHERE id = ?")
+    .bind(leagueId)
+    .first<{ commissioner_id: string }>();
+  if (!league) return c.json({ error: "League not found" }, 404);
+  if (league.commissioner_id !== user.id) {
+    return c.json({ error: "Only the commissioner can delete this league" }, 403);
+  }
+
+  // Explicit deletes rather than relying on D1's foreign-key cascade, so this is correct
+  // regardless of whether FK enforcement is on for this connection.
+  await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM fantasy_scores WHERE league_id = ?").bind(leagueId),
+    c.env.DB.prepare("DELETE FROM draft_picks WHERE league_id = ?").bind(leagueId),
+    c.env.DB.prepare("DELETE FROM league_members WHERE league_id = ?").bind(leagueId),
+    c.env.DB.prepare("DELETE FROM leagues WHERE id = ?").bind(leagueId),
+  ]);
+
+  // Best-effort: clear the draft room's Durable Object state so a stale alarm never
+  // fires against a league that no longer exists.
+  try {
+    const stub = c.env.DRAFT_ROOM.get(c.env.DRAFT_ROOM.idFromName(leagueId));
+    await stub.resetForDeletion();
+  } catch (error) {
+    console.error("Failed to reset draft room after league deletion", error);
+  }
+
+  return c.json({ ok: true });
+});
+
 /** Draftable teams for a league, cheapest information the draft board needs. */
 leagueRoutes.get("/:id/pool", async (c) => {
   const leagueId = c.req.param("id");

@@ -1,6 +1,8 @@
+import type { DraftRoom } from "../durable-objects/DraftRoom";
+
 export interface Env {
   DB: D1Database;
-  DRAFT_ROOM: DurableObjectNamespace;
+  DRAFT_ROOM: DurableObjectNamespace<DraftRoom>;
   ASSETS: Fetcher;
   /** Season the app is currently serving, e.g. "2026". */
   SEASON_YEAR: string;

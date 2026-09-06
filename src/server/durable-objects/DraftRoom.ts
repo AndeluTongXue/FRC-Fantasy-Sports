@@ -32,6 +32,20 @@ export class DraftRoom extends DurableObject<Env> {
     });
   }
 
+  /**
+   * Called when the league itself is deleted, so this room doesn't linger with a
+   * scheduled alarm that would later fire against a league row that no longer exists.
+   */
+  async resetForDeletion(): Promise<void> {
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+    this.state = null;
+    this.leagueId = null;
+    for (const socket of this.ctx.getWebSockets()) {
+      socket.close(1000, "League deleted");
+    }
+  }
+
   async fetch(request: Request): Promise<Response> {
     const leagueId = request.headers.get("X-League-Id");
     const userId = request.headers.get("X-User-Id");
@@ -77,7 +91,14 @@ export class DraftRoom extends DurableObject<Env> {
     const onClock = this.state.currentUserId;
     if (!onClock) return;
 
-    const league = await this.loadLeague();
+    let league: LeagueConfig;
+    try {
+      league = await this.loadLeague();
+    } catch {
+      // League was deleted out from under this alarm — stop retrying instead of looping.
+      await this.resetForDeletion();
+      return;
+    }
     const budget = this.state.budgets[onClock] ?? 0;
     const slotsAfterPick = this.slotsRemaining(onClock) - 1;
     const floor = await this.cheapestAvailable(league);
