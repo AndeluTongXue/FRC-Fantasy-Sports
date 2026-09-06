@@ -36,6 +36,10 @@ export function League() {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [editingCap, setEditingCap] = useState(false);
+  const [capInput, setCapInput] = useState("");
+  const [savingCap, setSavingCap] = useState(false);
+  const [capError, setCapError] = useState("");
 
   useEffect(() => {
     api
@@ -51,6 +55,32 @@ export function League() {
   const spent = (userId: string) =>
     picks.filter((pick) => pick.userId === userId).reduce((total, pick) => total + pick.price, 0);
   const isCommissioner = league.commissionerId === user?.id;
+  const canEditCap = isCommissioner && league.status === "setup";
+
+  function startEditingCap() {
+    setCapInput(String(league.salaryCap));
+    setCapError("");
+    setEditingCap(true);
+  }
+
+  async function saveCap() {
+    const salaryCap = Number(capInput);
+    if (!Number.isInteger(salaryCap) || salaryCap < 50 || salaryCap > 500) {
+      setCapError("Enter a whole number between $50 and $500");
+      return;
+    }
+    setSavingCap(true);
+    setCapError("");
+    try {
+      const updated = await api.patch<{ league: LeagueDetail["league"] }>(`/leagues/${league.id}`, { salaryCap });
+      setDetail((prev) => prev && { ...prev, league: updated.league });
+      setEditingCap(false);
+    } catch (caught) {
+      setCapError(caught instanceof Error ? caught.message : "Could not update budget");
+    } finally {
+      setSavingCap(false);
+    }
+  }
 
   async function deleteLeague() {
     setDeleting(true);
@@ -69,10 +99,57 @@ export function League() {
       <div className="mb-6 flex flex-wrap items-center gap-3">
         <div className="flex-1">
           <h1 className="text-xl font-semibold">{league.name}</h1>
-          <p className="text-sm text-slate-400">
-            {league.leagueType === "season" ? "Full season" : league.eventKey} · {league.rosterSize} teams · $
-            {league.salaryCap} cap
+          <p className="flex flex-wrap items-center gap-x-1 text-sm text-slate-400">
+            <span>
+              {league.leagueType === "season" ? "Full season" : league.eventKey} · {league.rosterSize} teams
+              ·
+            </span>
+            {editingCap ? (
+              <span className="inline-flex items-center gap-1.5">
+                $
+                <input
+                  type="number"
+                  min={50}
+                  max={500}
+                  value={capInput}
+                  onChange={(event) => setCapInput(event.target.value)}
+                  className="w-16 rounded border border-edge bg-surface-raised px-1.5 py-0.5 text-sm outline-none focus:border-sky-500"
+                  autoFocus
+                />
+                cap
+                <button
+                  type="button"
+                  onClick={saveCap}
+                  disabled={savingCap}
+                  className="rounded bg-sky-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-50"
+                >
+                  {savingCap ? "Saving…" : "Save"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingCap(false)}
+                  disabled={savingCap}
+                  className="text-xs text-slate-500 hover:text-slate-300"
+                >
+                  Cancel
+                </button>
+              </span>
+            ) : (
+              <span>
+                ${league.salaryCap} cap
+                {canEditCap && (
+                  <button
+                    type="button"
+                    onClick={startEditingCap}
+                    className="ml-1.5 text-xs text-sky-400 hover:underline"
+                  >
+                    Edit
+                  </button>
+                )}
+              </span>
+            )}
           </p>
+          {capError && <p className="mt-1 text-xs text-red-400">{capError}</p>}
         </div>
         <div className="rounded-md border border-edge bg-surface px-3 py-2 text-sm">
           Invite code <span className="ml-1 font-mono text-sky-400">{league.inviteCode}</span>

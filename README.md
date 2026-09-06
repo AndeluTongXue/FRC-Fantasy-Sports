@@ -98,6 +98,7 @@ Both scripts drive the real API and WebSocket draft against a running dev server
 node scripts/draft-smoke.mjs         # turn order, budget guards, snake reversal, completion
 node scripts/season-smoke.mjs        # season-long scoring, including the best-2-regular-events cap
 node scripts/delete-league-smoke.mjs # commissioner-only delete, D1 cleanup, draft room teardown
+node scripts/edit-budget-smoke.mjs   # commissioner-only, pre-draft-only salary cap editing
 ```
 
 ## Deploying to Cloudflare

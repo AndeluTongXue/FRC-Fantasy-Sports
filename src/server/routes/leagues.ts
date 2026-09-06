@@ -251,6 +251,35 @@ leagueRoutes.get("/:id", async (c) => {
   });
 });
 
+/** Only the salary cap is editable, and only before the draft starts — once picks exist,
+ * changing the cap would retroactively make some already-drafted picks illegal. */
+leagueRoutes.patch("/:id", async (c) => {
+  const leagueId = c.req.param("id");
+  const user = c.get("user");
+  const body = await c.req.json<{ salaryCap?: unknown }>();
+
+  const league = await c.env.DB.prepare("SELECT * FROM leagues WHERE id = ?")
+    .bind(leagueId)
+    .first<LeagueRow>();
+  if (!league) return c.json({ error: "League not found" }, 404);
+  if (league.commissioner_id !== user.id) {
+    return c.json({ error: "Only the commissioner can edit this league" }, 403);
+  }
+  if (league.status !== "setup") {
+    return c.json({ error: "The budget can't change once the draft has started" }, 409);
+  }
+
+  if (body.salaryCap === undefined) return c.json({ league: toLeague(league) });
+
+  const salaryCap = Number(body.salaryCap);
+  if (!Number.isFinite(salaryCap) || !Number.isInteger(salaryCap) || salaryCap < 50 || salaryCap > 500) {
+    return c.json({ error: "Salary cap must be a whole number between $50 and $500" }, 400);
+  }
+
+  await c.env.DB.prepare("UPDATE leagues SET salary_cap = ? WHERE id = ?").bind(salaryCap, leagueId).run();
+  return c.json({ league: toLeague({ ...league, salary_cap: salaryCap }) });
+});
+
 leagueRoutes.delete("/:id", async (c) => {
   const leagueId = c.req.param("id");
   const user = c.get("user");
