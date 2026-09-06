@@ -86,10 +86,18 @@ single-event league tied to an offseason event (e.g. Chezy Champs) is unaffected
 normally, since that's a deliberate choice, not season-long auto-discovery.
 
 **League membership** — the commissioner (whoever created the league) can edit the budget
-and delete the league at any time; any member can leave, but only before the draft starts,
-since a mid-draft roster with no owner is a bigger mess than just not allowing it. If the
-commissioner leaves and others remain, ownership passes to whoever joined earliest after
-them; if they're the only member, they're pointed at deleting the league instead.
+and delete the league at any time; any member can leave or rename their own team, and any
+member can leave, but only before the draft starts, since a mid-draft roster with no owner
+is a bigger mess than just not allowing it. If the commissioner leaves and others remain,
+ownership passes to whoever joined earliest after them; if they're the only member, they're
+pointed at deleting the league instead.
+
+The commissioner can also ban a member — kicking them immediately and blocking them from
+rejoining with the invite code until unbanned — from a "Banned users" list on the league
+page. Same pre-draft-only restriction as leaving, for the same reason (a kicked mid-draft
+roster has no good outcome). A ban check is by account id, so it's a moderation tool for
+"this specific account is causing problems," not a hard guarantee against someone signing up
+again under a new email.
 
 ## Local development
 
@@ -123,6 +131,7 @@ node scripts/delete-league-smoke.mjs # commissioner-only delete, D1 cleanup, dra
 node scripts/edit-budget-smoke.mjs   # commissioner-only, pre-draft-only salary cap editing
 node scripts/minimum-cap-smoke.mjs   # minimum-cap math + a live adversarial draft proving the guarantee holds
 node scripts/leave-league-smoke.mjs  # leaving pre-draft, commissioner transfer, solo-member block, post-draft lock
+node scripts/ban-league-smoke.mjs    # commissioner-only ban/unban, kick + rejoin block, self-ban refused, post-draft lock
 ```
 
 ## Deploying to Cloudflare

@@ -173,6 +173,11 @@ leagueRoutes.post("/join", async (c) => {
   }
   if (league.status !== "setup") return c.json({ error: "That league has already started drafting" }, 409);
 
+  const banned = await c.env.DB.prepare("SELECT 1 FROM league_bans WHERE league_id = ? AND user_id = ?")
+    .bind(league.id, user.id)
+    .first();
+  if (banned) return c.json({ error: "You've been banned from this league" }, 403);
+
   const count = await c.env.DB.prepare("SELECT COUNT(*) AS count FROM league_members WHERE league_id = ?")
     .bind(league.id)
     .first<{ count: number }>();
@@ -228,7 +233,9 @@ leagueRoutes.get("/:id", async (c) => {
     return c.json({ error: "You're not in this league" }, 403);
   }
 
-  const [members, picks] = await Promise.all([
+  const isCommissioner = league.commissioner_id === user.id;
+
+  const [members, picks, bans] = await Promise.all([
     c.env.DB.prepare(
       `SELECT m.user_id, m.roster_name, m.draft_position, m.joined_at, u.display_name
        FROM league_members m JOIN users u ON u.id = m.user_id
@@ -257,6 +264,16 @@ leagueRoutes.get("/:id", async (c) => {
         nickname: string | null;
         team_number: number | null;
       }>(),
+    // Only the commissioner needs to see who's banned.
+    isCommissioner
+      ? c.env.DB.prepare(
+          `SELECT b.user_id, b.banned_at, u.display_name
+           FROM league_bans b JOIN users u ON u.id = b.user_id
+           WHERE b.league_id = ? ORDER BY b.banned_at DESC`,
+        )
+          .bind(leagueId)
+          .all<{ user_id: string; banned_at: number; display_name: string }>()
+      : Promise.resolve({ results: [] as { user_id: string; banned_at: number; display_name: string }[] }),
   ]);
 
   return c.json({
@@ -267,6 +284,11 @@ leagueRoutes.get("/:id", async (c) => {
       rosterName: row.roster_name,
       draftPosition: row.draft_position,
       joinedAt: row.joined_at,
+    })),
+    bannedUsers: bans.results.map((row) => ({
+      userId: row.user_id,
+      displayName: row.display_name,
+      bannedAt: row.banned_at,
     })),
     picks: picks.results.map((row) => ({
       pickNumber: row.pick_number,
@@ -309,6 +331,30 @@ leagueRoutes.patch("/:id", async (c) => {
   return c.json({ league: toLeague({ ...league, salary_cap: salaryCap }) });
 });
 
+/** A member renames their own team. Purely cosmetic, so unlike the salary cap this is
+ * allowed any time — before, during, or after the draft. */
+leagueRoutes.patch("/:id/roster-name", async (c) => {
+  const leagueId = c.req.param("id");
+  const user = c.get("user");
+  const body = await c.req.json<{ rosterName?: unknown }>();
+
+  const league = await c.env.DB.prepare("SELECT id FROM leagues WHERE id = ?").bind(leagueId).first();
+  if (!league) return c.json({ error: "League not found" }, 404);
+  if (!(await loadMembership(c.env.DB, leagueId, user.id))) {
+    return c.json({ error: "You're not in this league" }, 403);
+  }
+
+  const rosterName = typeof body.rosterName === "string" ? body.rosterName.trim() : "";
+  if (!rosterName) return c.json({ error: "Team name can't be empty" }, 400);
+  if (rosterName.length > 40) return c.json({ error: "Team name must be 40 characters or fewer" }, 400);
+
+  await c.env.DB.prepare("UPDATE league_members SET roster_name = ? WHERE league_id = ? AND user_id = ?")
+    .bind(rosterName, leagueId, user.id)
+    .run();
+
+  return c.json({ rosterName });
+});
+
 leagueRoutes.delete("/:id", async (c) => {
   const leagueId = c.req.param("id");
   const user = c.get("user");
@@ -327,6 +373,7 @@ leagueRoutes.delete("/:id", async (c) => {
     c.env.DB.prepare("DELETE FROM fantasy_scores WHERE league_id = ?").bind(leagueId),
     c.env.DB.prepare("DELETE FROM draft_picks WHERE league_id = ?").bind(leagueId),
     c.env.DB.prepare("DELETE FROM league_members WHERE league_id = ?").bind(leagueId),
+    c.env.DB.prepare("DELETE FROM league_bans WHERE league_id = ?").bind(leagueId),
     c.env.DB.prepare("DELETE FROM leagues WHERE id = ?").bind(leagueId),
   ]);
 
@@ -390,6 +437,63 @@ leagueRoutes.post("/:id/leave", async (c) => {
   ]);
 
   return c.json({ ok: true, newCommissionerId: successor.user_id });
+});
+
+/**
+ * Commissioner kicks a member and blocks them from rejoining (via invite code) until
+ * unbanned. Only allowed pre-draft, same reasoning as leaving: once picks exist, a roster
+ * with no owner is a bigger mess than just not allowing this.
+ */
+leagueRoutes.post("/:id/ban", async (c) => {
+  const leagueId = c.req.param("id");
+  const user = c.get("user");
+  const body = await c.req.json<{ userId?: string }>();
+  const targetId = body.userId?.trim();
+
+  const league = await c.env.DB.prepare("SELECT commissioner_id, status FROM leagues WHERE id = ?")
+    .bind(leagueId)
+    .first<{ commissioner_id: string; status: string }>();
+  if (!league) return c.json({ error: "League not found" }, 404);
+  if (league.commissioner_id !== user.id) {
+    return c.json({ error: "Only the commissioner can ban members" }, 403);
+  }
+  if (!targetId) return c.json({ error: "userId is required" }, 400);
+  if (targetId === user.id) return c.json({ error: "You can't ban yourself" }, 400);
+  if (league.status !== "setup") {
+    return c.json({ error: "Can't ban a member once the draft has started" }, 409);
+  }
+
+  await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM league_members WHERE league_id = ? AND user_id = ?").bind(leagueId, targetId),
+    c.env.DB.prepare(
+      `INSERT INTO league_bans (league_id, user_id, banned_at) VALUES (?, ?, ?)
+       ON CONFLICT(league_id, user_id) DO UPDATE SET banned_at = excluded.banned_at`,
+    ).bind(leagueId, targetId, Date.now()),
+  ]);
+
+  return c.json({ ok: true });
+});
+
+leagueRoutes.post("/:id/unban", async (c) => {
+  const leagueId = c.req.param("id");
+  const user = c.get("user");
+  const body = await c.req.json<{ userId?: string }>();
+  const targetId = body.userId?.trim();
+
+  const league = await c.env.DB.prepare("SELECT commissioner_id FROM leagues WHERE id = ?")
+    .bind(leagueId)
+    .first<{ commissioner_id: string }>();
+  if (!league) return c.json({ error: "League not found" }, 404);
+  if (league.commissioner_id !== user.id) {
+    return c.json({ error: "Only the commissioner can unban members" }, 403);
+  }
+  if (!targetId) return c.json({ error: "userId is required" }, 400);
+
+  await c.env.DB.prepare("DELETE FROM league_bans WHERE league_id = ? AND user_id = ?")
+    .bind(leagueId, targetId)
+    .run();
+
+  return c.json({ ok: true });
 });
 
 /** Draftable teams for a league, cheapest information the draft board needs. */

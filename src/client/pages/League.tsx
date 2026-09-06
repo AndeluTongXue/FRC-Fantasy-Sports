@@ -31,6 +31,7 @@ export interface LeagueDetail {
     nickname: string | null;
     price: number;
   }[];
+  bannedUsers: { userId: string; displayName: string; bannedAt: number }[];
 }
 
 export function League() {
@@ -45,10 +46,19 @@ export function League() {
   const [confirmingLeave, setConfirmingLeave] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [leaveError, setLeaveError] = useState("");
+  const [banningUserId, setBanningUserId] = useState<string | null>(null);
+  const [banningInFlight, setBanningInFlight] = useState(false);
+  const [banError, setBanError] = useState("");
+  const [unbanningUserId, setUnbanningUserId] = useState<string | null>(null);
+  const [unbanError, setUnbanError] = useState("");
   const [editingCap, setEditingCap] = useState(false);
   const [capInput, setCapInput] = useState("");
   const [savingCap, setSavingCap] = useState(false);
   const [capError, setCapError] = useState("");
+  const [editingRosterName, setEditingRosterName] = useState(false);
+  const [rosterNameInput, setRosterNameInput] = useState("");
+  const [savingRosterName, setSavingRosterName] = useState(false);
+  const [rosterNameError, setRosterNameError] = useState("");
   const [capMinimum, setCapMinimum] = useState<{
     minimumCap: number;
     worstCaseAveragePrice: number;
@@ -67,11 +77,12 @@ export function League() {
   if (error) return <p className="text-sm text-red-600">{error}</p>;
   if (!detail) return <p className="text-sm text-slate-600">Loading…</p>;
 
-  const { league, members, picks } = detail;
+  const { league, members, picks, bannedUsers } = detail;
   const spent = (userId: string) =>
     picks.filter((pick) => pick.userId === userId).reduce((total, pick) => total + pick.price, 0);
   const isCommissioner = league.commissionerId === user?.id;
   const canEditCap = isCommissioner && league.status === "setup";
+  const canBan = isCommissioner && league.status === "setup";
   const canLeave = league.status === "setup";
   // members is already sorted by joinedAt ascending; the next-oldest other member is who'd
   // inherit commissioner duties if the current commissioner leaves.
@@ -120,6 +131,43 @@ export function League() {
     }
   }
 
+  function startEditingRosterName(currentName: string) {
+    setRosterNameInput(currentName);
+    setRosterNameError("");
+    setEditingRosterName(true);
+  }
+
+  async function saveRosterName() {
+    const rosterName = rosterNameInput.trim();
+    if (!rosterName) {
+      setRosterNameError("Team name can't be empty");
+      return;
+    }
+    if (rosterName.length > 40) {
+      setRosterNameError("Team name must be 40 characters or fewer");
+      return;
+    }
+    setSavingRosterName(true);
+    setRosterNameError("");
+    try {
+      await api.patch(`/leagues/${league.id}/roster-name`, { rosterName });
+      setDetail(
+        (prev) =>
+          prev && {
+            ...prev,
+            members: prev.members.map((member) =>
+              member.userId === user?.id ? { ...member, rosterName } : member,
+            ),
+          },
+      );
+      setEditingRosterName(false);
+    } catch (caught) {
+      setRosterNameError(caught instanceof Error ? caught.message : "Could not rename team");
+    } finally {
+      setSavingRosterName(false);
+    }
+  }
+
   async function leaveLeague() {
     setLeaving(true);
     setLeaveError("");
@@ -129,6 +177,37 @@ export function League() {
     } catch (caught) {
       setLeaveError(caught instanceof Error ? caught.message : "Could not leave league");
       setLeaving(false);
+    }
+  }
+
+  async function refetch() {
+    setDetail(await api.get<LeagueDetail>(`/leagues/${league.id}`));
+  }
+
+  async function banMember(userId: string) {
+    setBanningInFlight(true);
+    setBanError("");
+    try {
+      await api.post(`/leagues/${league.id}/ban`, { userId });
+      setBanningUserId(null);
+      await refetch();
+    } catch (caught) {
+      setBanError(caught instanceof Error ? caught.message : "Could not ban member");
+    } finally {
+      setBanningInFlight(false);
+    }
+  }
+
+  async function unbanUser(userId: string) {
+    setUnbanningUserId(userId);
+    setUnbanError("");
+    try {
+      await api.post(`/leagues/${league.id}/unban`, { userId });
+      await refetch();
+    } catch (caught) {
+      setUnbanError(caught instanceof Error ? caught.message : "Could not unban user");
+    } finally {
+      setUnbanningUserId(null);
     }
   }
 
@@ -246,13 +325,96 @@ export function League() {
             <div key={member.userId} className="rounded-lg border border-edge bg-surface p-4">
               <div className="mb-3 flex items-baseline justify-between gap-2">
                 <div>
-                  <h2 className="font-medium">{member.rosterName}</h2>
+                  {editingRosterName && member.userId === user?.id ? (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={rosterNameInput}
+                        onChange={(event) => setRosterNameInput(event.target.value)}
+                        maxLength={40}
+                        autoFocus
+                        className="rounded border border-edge bg-surface-raised px-1.5 py-0.5 text-sm font-medium outline-none focus:border-sky-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={saveRosterName}
+                        disabled={savingRosterName}
+                        className="rounded bg-sky-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+                      >
+                        {savingRosterName ? "Saving…" : "Save"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingRosterName(false)}
+                        disabled={savingRosterName}
+                        className="text-xs text-slate-500 hover:text-slate-700"
+                      >
+                        Cancel
+                      </button>
+                      {rosterNameError && <p className="w-full text-xs text-red-600">{rosterNameError}</p>}
+                    </div>
+                  ) : (
+                    <h2 className="font-medium">
+                      {member.rosterName}
+                      {member.userId === user?.id && (
+                        <button
+                          type="button"
+                          onClick={() => startEditingRosterName(member.rosterName)}
+                          className="ml-1.5 text-xs text-sky-600 hover:underline"
+                        >
+                          Edit
+                        </button>
+                      )}
+                    </h2>
+                  )}
                   <p className="text-xs text-slate-500">{member.displayName}</p>
                 </div>
-                <span className="font-mono text-sm text-slate-600">
-                  ${league.salaryCap - spent(member.userId)} left
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-sm text-slate-600">
+                    ${league.salaryCap - spent(member.userId)} left
+                  </span>
+                  {canBan && member.userId !== user?.id && banningUserId !== member.userId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBanningUserId(member.userId);
+                        setBanError("");
+                      }}
+                      className="text-xs text-red-700 hover:underline"
+                    >
+                      Ban
+                    </button>
+                  )}
+                </div>
               </div>
+
+              {banningUserId === member.userId && (
+                <div className="mb-3 rounded-md border border-red-300 bg-red-100 p-2">
+                  <p className="mb-2 text-xs text-slate-700">
+                    Ban {member.rosterName}? They'll be removed from the league and won't be able to rejoin
+                    unless unbanned.
+                  </p>
+                  {banError && <p className="mb-2 text-xs text-red-600">{banError}</p>}
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setBanningUserId(null)}
+                      disabled={banningInFlight}
+                      className="rounded-md border border-edge bg-surface px-2 py-1 text-xs hover:border-sky-600 hover:bg-cream disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => banMember(member.userId)}
+                      disabled={banningInFlight}
+                      className="rounded-md bg-red-700 px-2 py-1 text-xs font-medium text-white hover:bg-red-800 disabled:opacity-50"
+                    >
+                      {banningInFlight ? "Banning…" : "Yes, ban"}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {roster.length === 0 ? (
                 <p className="text-sm text-slate-500">No teams drafted yet.</p>
@@ -273,6 +435,32 @@ export function League() {
           );
         })}
       </div>
+
+      {isCommissioner && (
+        <div className="mt-8 rounded-lg border border-edge bg-surface p-4">
+          <h2 className="mb-3 text-sm font-medium text-slate-700">Banned users</h2>
+          {unbanError && <p className="mb-2 text-sm text-red-600">{unbanError}</p>}
+          {bannedUsers.length === 0 ? (
+            <p className="text-sm text-slate-500">No banned users.</p>
+          ) : (
+            <ul className="space-y-2">
+              {bannedUsers.map((banned) => (
+                <li key={banned.userId} className="flex items-center justify-between gap-2 text-sm">
+                  <span className="text-slate-700">{banned.displayName}</span>
+                  <button
+                    type="button"
+                    onClick={() => unbanUser(banned.userId)}
+                    disabled={unbanningUserId === banned.userId}
+                    className="rounded-md border border-edge bg-surface px-3 py-1 text-xs hover:border-sky-600 hover:bg-cream disabled:opacity-50"
+                  >
+                    {unbanningUserId === banned.userId ? "Unbanning…" : "Unban"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {(canLeave || isCommissioner) && (
         <div className="mt-8 rounded-lg border border-red-300 bg-red-100 p-4">
