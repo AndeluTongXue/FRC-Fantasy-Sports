@@ -27,13 +27,13 @@ export function Login() {
   return (
     <div className="mx-auto mt-24 max-w-sm px-4">
       <h1 className="mb-1 text-2xl font-bold">
-        <span className="text-sky-400">FRC</span> Fantasy
+        <span className="text-sky-600">FRC</span> Fantasy
       </h1>
-      <p className="mb-6 text-sm text-slate-400">Sign in to draft and manage your leagues.</p>
+      <p className="mb-6 text-sm text-slate-600">Sign in to draft and manage your leagues.</p>
 
       <form onSubmit={handleSubmit} className="space-y-4 rounded-lg border border-edge bg-surface p-6">
         <label className="block">
-          <span className="mb-1 block text-sm text-slate-300">Email</span>
+          <span className="mb-1 block text-sm text-slate-700">Email</span>
           <input
             type="email"
             required
@@ -44,7 +44,7 @@ export function Login() {
         </label>
 
         <label className="block">
-          <span className="mb-1 block text-sm text-slate-300">Password</span>
+          <span className="mb-1 block text-sm text-slate-700">Password</span>
           <input
             type="password"
             required
@@ -54,20 +54,20 @@ export function Login() {
           />
         </label>
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && <p className="text-sm text-red-600">{error}</p>}
 
         <button
           type="submit"
           disabled={pending}
-          className="w-full rounded-md bg-sky-600 px-3 py-2 font-medium text-white hover:bg-sky-500 disabled:opacity-50"
+          className="w-full rounded-md bg-sky-600 px-3 py-2 font-medium text-white hover:bg-sky-700 disabled:opacity-50"
         >
           {pending ? "Signing in…" : "Sign in"}
         </button>
       </form>
 
-      <p className="mt-4 text-center text-sm text-slate-400">
+      <p className="mt-4 text-center text-sm text-slate-600">
         No account?{" "}
-        <Link to="/signup" className="text-sky-400 hover:underline">
+        <Link to="/signup" className="text-sky-600 hover:underline">
           Create one
         </Link>
       </p>

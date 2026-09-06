@@ -37,7 +37,7 @@ export function Draft() {
     return () => clearTimeout(timer);
   }, [leagueId, search, picksMade]);
 
-  if (!detail || !state) return <p className="text-sm text-slate-400">Connecting to draft room…</p>;
+  if (!detail || !state) return <p className="text-sm text-slate-600">Connecting to draft room…</p>;
 
   const nameOf = (userId: string | null) =>
     detail.members.find((member) => member.userId === userId)?.rosterName ?? "—";
@@ -50,20 +50,20 @@ export function Draft() {
     <div>
       <div className="mb-6 flex flex-wrap items-center gap-3">
         <div className="flex-1">
-          <Link to={`/leagues/${leagueId}`} className="text-sm text-slate-400 hover:text-white">
+          <Link to={`/leagues/${leagueId}`} className="text-sm text-slate-600 hover:text-slate-900">
             ← {detail.league.name}
           </Link>
           <h1 className="text-xl font-semibold">Draft room</h1>
         </div>
-        <span className={`text-xs ${connected ? "text-emerald-400" : "text-amber-400"}`}>
+        <span className={`text-xs ${connected ? "text-emerald-600" : "text-amber-600"}`}>
           {connected ? "● live" : "○ reconnecting"}
         </span>
       </div>
 
       {error && (
-        <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-red-900 bg-red-950/50 px-4 py-2">
-          <p className="text-sm text-red-300">{error}</p>
-          <button type="button" onClick={dismissError} className="text-sm text-red-400 hover:text-red-200">
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-red-300 bg-red-100 px-4 py-2">
+          <p className="text-sm text-red-800">{error}</p>
+          <button type="button" onClick={dismissError} className="text-sm font-medium text-red-700 hover:text-red-900">
             Dismiss
           </button>
         </div>
@@ -71,16 +71,16 @@ export function Draft() {
 
       {state.status === "pending" && (
         <div className="mb-6 rounded-lg border border-edge bg-surface p-6 text-center">
-          <p className="mb-1 text-slate-300">Waiting for the commissioner to start the draft.</p>
+          <p className="mb-1 text-slate-700">Waiting for the commissioner to start the draft.</p>
           <p className="mb-4 text-sm text-slate-500">
             {detail.members.length} of {detail.league.maxMembers} owners have joined · share code{" "}
-            <span className="font-mono text-sky-400">{detail.league.inviteCode}</span>
+            <span className="font-mono text-sky-600">{detail.league.inviteCode}</span>
           </p>
           {isCommissioner && (
             <button
               type="button"
               onClick={start}
-              className="rounded-md bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500"
+              className="rounded-md bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700"
             >
               Start draft
             </button>
@@ -91,7 +91,7 @@ export function Draft() {
       {state.status === "active" && (
         <div
           className={`mb-6 rounded-lg border p-4 ${
-            myTurn ? "border-sky-500 bg-sky-950/40" : "border-edge bg-surface"
+            myTurn ? "border-sky-500 bg-sky-50" : "border-edge bg-surface"
           }`}
         >
           <div className="flex flex-wrap items-center gap-4">
@@ -105,7 +105,7 @@ export function Draft() {
             </div>
             <div className="text-right">
               <p className="text-xs uppercase tracking-wide text-slate-500">Time left</p>
-              <p className={`font-mono text-2xl ${remaining !== null && remaining <= 10 ? "text-red-400" : ""}`}>
+              <p className={`font-mono text-2xl ${remaining !== null && remaining <= 10 ? "text-red-600" : ""}`}>
                 {remaining === null ? "—" : `0:${String(remaining).padStart(2, "0")}`}
               </p>
             </div>
@@ -114,8 +114,8 @@ export function Draft() {
       )}
 
       {state.status === "complete" && (
-        <div className="mb-6 rounded-lg border border-emerald-900 bg-emerald-950/40 p-4 text-center">
-          <p className="text-emerald-300">Draft complete — rosters are locked in.</p>
+        <div className="mb-6 rounded-lg border border-emerald-300 bg-emerald-100 p-4 text-center">
+          <p className="font-medium text-emerald-800">Draft complete — rosters are locked in.</p>
         </div>
       )}
 
@@ -130,7 +130,7 @@ export function Draft() {
               className="flex-1 rounded-md border border-edge bg-surface px-3 py-1.5 text-sm outline-none focus:border-sky-500 sm:max-w-xs"
             />
             {state.status === "active" && (
-              <span className="font-mono text-sm text-slate-400">${myBudget} left</span>
+              <span className="font-mono text-sm text-slate-600">${myBudget} left</span>
             )}
           </div>
 
@@ -141,9 +141,9 @@ export function Draft() {
                   const affordable = team.price <= myBudget;
                   return (
                     <tr key={team.teamKey} className="border-b border-edge last:border-0">
-                      <td className="px-3 py-2 font-mono font-semibold text-sky-400">{team.teamNumber}</td>
+                      <td className="px-3 py-2 font-mono font-semibold text-sky-600">{team.teamNumber}</td>
                       <td className="px-3 py-2">{team.nickname}</td>
-                      <td className="px-3 py-2 text-right font-mono text-slate-400">
+                      <td className="px-3 py-2 text-right font-mono text-slate-600">
                         {team.epa === null ? "—" : team.epa.toFixed(0)}
                       </td>
                       <td className="px-3 py-2 text-right font-mono">${team.price}</td>
@@ -152,7 +152,7 @@ export function Draft() {
                           type="button"
                           disabled={!myTurn || state.status !== "active" || !affordable}
                           onClick={() => pick(team.teamKey)}
-                          className="rounded bg-sky-600 px-3 py-1 text-xs font-medium text-white hover:bg-sky-500 disabled:bg-surface-raised disabled:text-slate-600"
+                          className="rounded bg-sky-600 px-3 py-1 text-xs font-medium text-white hover:bg-sky-700 disabled:bg-surface-raised disabled:text-slate-400"
                         >
                           Draft
                         </button>
@@ -176,7 +176,7 @@ export function Draft() {
                   <div
                     key={ownerId}
                     className={`rounded-lg border p-3 ${
-                      onClock ? "border-sky-500 bg-sky-950/30" : "border-edge bg-surface"
+                      onClock ? "border-sky-500 bg-sky-50" : "border-edge bg-surface"
                     }`}
                   >
                     <div className="flex items-baseline justify-between gap-2">
@@ -184,14 +184,14 @@ export function Draft() {
                         {state.order.length > 0 && <span className="text-slate-500">{index + 1}. </span>}
                         {nameOf(ownerId)}
                       </span>
-                      <span className="font-mono text-xs text-slate-400">${state.budgets[ownerId] ?? 0}</span>
+                      <span className="font-mono text-xs text-slate-600">${state.budgets[ownerId] ?? 0}</span>
                     </div>
-                    <ul className="mt-2 space-y-0.5 text-xs text-slate-400">
+                    <ul className="mt-2 space-y-0.5 text-xs text-slate-600">
                       {roster.map((entry) => {
                         const team = detail.picks.find((p) => p.teamKey === entry.teamKey);
                         return (
                           <li key={entry.teamKey}>
-                            <span className="font-mono text-sky-400">
+                            <span className="font-mono text-sky-600">
                               {team?.teamNumber ?? entry.teamKey.replace("frc", "")}
                             </span>{" "}
                             ${entry.price}
@@ -199,7 +199,7 @@ export function Draft() {
                         );
                       })}
                       {Array.from({ length: state.rosterSize - roster.length }).map((_, slot) => (
-                        <li key={`empty-${slot}`} className="text-slate-700">
+                        <li key={`empty-${slot}`} className="text-slate-300">
                           empty
                         </li>
                       ))}

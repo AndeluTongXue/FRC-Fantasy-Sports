@@ -49,19 +49,19 @@ export function Teams() {
           type="button"
           onClick={syncTeams}
           disabled={syncing}
-          className="rounded-md border border-edge bg-surface px-3 py-2 text-sm hover:border-sky-500 disabled:opacity-50"
+          className="rounded-md border border-edge bg-surface px-3 py-2 text-sm hover:border-sky-600 hover:bg-cream disabled:opacity-50"
         >
           {syncing ? "Syncing…" : "Sync from TBA"}
         </button>
       </div>
 
-      {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
+      {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
 
       {loading ? (
-        <p className="text-sm text-slate-400">Loading…</p>
+        <p className="text-sm text-slate-600">Loading…</p>
       ) : teams.length === 0 ? (
         <div className="rounded-lg border border-edge bg-surface p-8 text-center">
-          <p className="mb-2 text-slate-300">No teams cached yet.</p>
+          <p className="mb-2 text-slate-700">No teams cached yet.</p>
           <p className="text-sm text-slate-500">
             Hit “Sync from TBA” to pull the team list from The Blue Alliance.
           </p>
@@ -69,7 +69,7 @@ export function Teams() {
       ) : (
         <div className="overflow-x-auto rounded-lg border border-edge">
           <table className="w-full text-sm">
-            <thead className="bg-surface text-left text-slate-400">
+            <thead className="bg-surface text-left text-slate-600">
               <tr>
                 <th className="px-4 py-2 font-medium">Team</th>
                 <th className="px-4 py-2 font-medium">Name</th>
@@ -80,13 +80,13 @@ export function Teams() {
             <tbody>
               {teams.map((team) => (
                 <tr key={team.teamKey} className="border-t border-edge bg-surface/50">
-                  <td className="px-4 py-2 font-mono font-semibold text-sky-400">{team.teamNumber}</td>
+                  <td className="px-4 py-2 font-mono font-semibold text-sky-600">{team.teamNumber}</td>
                   <td className="px-4 py-2">{team.nickname ?? "—"}</td>
-                  <td className="px-4 py-2 text-slate-400">
+                  <td className="px-4 py-2 text-slate-600">
                     {[team.city, team.stateProv, team.country].filter(Boolean).join(", ") || "—"}
                   </td>
                   <td className="px-4 py-2 text-right font-mono">
-                    {team.price === null ? <span className="text-slate-600">—</span> : `$${team.price}`}
+                    {team.price === null ? <span className="text-slate-400">—</span> : `$${team.price}`}
                   </td>
                 </tr>
               ))}

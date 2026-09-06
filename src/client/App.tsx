@@ -14,7 +14,7 @@ export function App() {
   const { user, loading } = useAuth();
 
   if (loading) {
-    return <p className="p-8 text-sm text-slate-400">Loading…</p>;
+    return <p className="p-8 text-sm text-slate-600">Loading…</p>;
   }
 
   if (!user) {

@@ -28,11 +28,11 @@ export function Signup() {
   return (
     <div className="mx-auto mt-24 max-w-sm px-4">
       <h1 className="mb-1 text-2xl font-bold">Create your account</h1>
-      <p className="mb-6 text-sm text-slate-400">Then create a league or join one with an invite code.</p>
+      <p className="mb-6 text-sm text-slate-600">Then create a league or join one with an invite code.</p>
 
       <form onSubmit={handleSubmit} className="space-y-4 rounded-lg border border-edge bg-surface p-6">
         <label className="block">
-          <span className="mb-1 block text-sm text-slate-300">Display name</span>
+          <span className="mb-1 block text-sm text-slate-700">Display name</span>
           <input
             required
             value={displayName}
@@ -42,7 +42,7 @@ export function Signup() {
         </label>
 
         <label className="block">
-          <span className="mb-1 block text-sm text-slate-300">Email</span>
+          <span className="mb-1 block text-sm text-slate-700">Email</span>
           <input
             type="email"
             required
@@ -53,7 +53,7 @@ export function Signup() {
         </label>
 
         <label className="block">
-          <span className="mb-1 block text-sm text-slate-300">Password</span>
+          <span className="mb-1 block text-sm text-slate-700">Password</span>
           <input
             type="password"
             required
@@ -65,20 +65,20 @@ export function Signup() {
           <span className="mt-1 block text-xs text-slate-500">At least 8 characters.</span>
         </label>
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && <p className="text-sm text-red-600">{error}</p>}
 
         <button
           type="submit"
           disabled={pending}
-          className="w-full rounded-md bg-sky-600 px-3 py-2 font-medium text-white hover:bg-sky-500 disabled:opacity-50"
+          className="w-full rounded-md bg-sky-600 px-3 py-2 font-medium text-white hover:bg-sky-700 disabled:opacity-50"
         >
           {pending ? "Creating account…" : "Create account"}
         </button>
       </form>
 
-      <p className="mt-4 text-center text-sm text-slate-400">
+      <p className="mt-4 text-center text-sm text-slate-600">
         Already have an account?{" "}
-        <Link to="/login" className="text-sky-400 hover:underline">
+        <Link to="/login" className="text-sky-600 hover:underline">
           Sign in
         </Link>
       </p>

@@ -49,19 +49,19 @@ export function Events() {
           type="button"
           onClick={syncEvents}
           disabled={syncing}
-          className="rounded-md border border-edge bg-surface px-3 py-2 text-sm hover:border-sky-500 disabled:opacity-50"
+          className="rounded-md border border-edge bg-surface px-3 py-2 text-sm hover:border-sky-600 hover:bg-cream disabled:opacity-50"
         >
           {syncing ? "Syncing…" : "Sync from TBA"}
         </button>
       </div>
 
-      {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
+      {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
 
       {loading ? (
-        <p className="text-sm text-slate-400">Loading…</p>
+        <p className="text-sm text-slate-600">Loading…</p>
       ) : events.length === 0 ? (
         <div className="rounded-lg border border-edge bg-surface p-8 text-center">
-          <p className="mb-2 text-slate-300">No events cached yet.</p>
+          <p className="mb-2 text-slate-700">No events cached yet.</p>
           <p className="text-sm text-slate-500">
             Hit “Sync from TBA” to pull this season's event schedule.
           </p>
@@ -73,12 +73,12 @@ export function Events() {
               <div className="flex items-start justify-between gap-2">
                 <h2 className="font-medium">{event.shortName || event.name}</h2>
                 {event.week !== null && (
-                  <span className="shrink-0 rounded bg-surface-raised px-2 py-0.5 text-xs text-slate-400">
+                  <span className="shrink-0 rounded bg-cream px-2 py-0.5 text-xs text-slate-600">
                     Week {event.week + 1}
                   </span>
                 )}
               </div>
-              <p className="mt-1 text-sm text-slate-400">
+              <p className="mt-1 text-sm text-slate-600">
                 {[event.city, event.stateProv, event.country].filter(Boolean).join(", ")}
               </p>
               <p className="mt-2 font-mono text-xs text-slate-500">

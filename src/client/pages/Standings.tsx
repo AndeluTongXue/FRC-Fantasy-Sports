@@ -69,14 +69,14 @@ export function Standings() {
     }
   }
 
-  if (loading) return <p className="text-sm text-slate-400">Loading…</p>;
+  if (loading) return <p className="text-sm text-slate-600">Loading…</p>;
 
   const leader = standings[0]?.points ?? 0;
 
   return (
     <div>
       <div className="mb-6 flex flex-wrap items-center gap-3">
-        <Link to={`/leagues/${leagueId}`} className="text-sm text-slate-400 hover:text-white">
+        <Link to={`/leagues/${leagueId}`} className="text-sm text-slate-600 hover:text-slate-900">
           ← Back to league
         </Link>
         <h1 className="flex-1 text-xl font-semibold">Standings</h1>
@@ -84,16 +84,16 @@ export function Standings() {
           type="button"
           onClick={refresh}
           disabled={refreshing}
-          className="rounded-md border border-edge bg-surface px-3 py-2 text-sm hover:border-sky-500 disabled:opacity-50"
+          className="rounded-md border border-edge bg-surface px-3 py-2 text-sm hover:border-sky-600 hover:bg-cream disabled:opacity-50"
         >
           {refreshing ? "Pulling results…" : "Refresh from TBA"}
         </button>
       </div>
 
-      {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
+      {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
 
       {standings.every((owner) => owner.points === 0) && (
-        <p className="mb-4 rounded-md border border-edge bg-surface px-4 py-3 text-sm text-slate-400">
+        <p className="mb-4 rounded-md border border-edge bg-surface px-4 py-3 text-sm text-slate-600">
           No results scored yet. Hit “Refresh from TBA” once your teams have played.
         </p>
       )}
@@ -123,7 +123,7 @@ export function Standings() {
                   <span className="text-xs text-slate-500">−{Math.round(leader - owner.points)}</span>
                 )}
               </span>
-              <span className="text-slate-600">{expanded === owner.userId ? "▲" : "▼"}</span>
+              <span className="text-slate-400">{expanded === owner.userId ? "▲" : "▼"}</span>
             </button>
 
             {expanded === owner.userId && (
@@ -139,13 +139,13 @@ export function Standings() {
                       >
                         <div className="flex items-baseline justify-between gap-2">
                           <span className="text-sm">
-                            <span className="font-mono font-semibold text-sky-400">{entry.teamNumber}</span>{" "}
-                            <span className="text-slate-300">{entry.nickname}</span>
+                            <span className="font-mono font-semibold text-sky-600">{entry.teamNumber}</span>{" "}
+                            <span className="text-slate-700">{entry.nickname}</span>
                             <span className="ml-2 text-xs text-slate-500">
                               {entry.eventName ?? entry.eventKey}
                             </span>
                             {!entry.counted && (
-                              <span className="ml-2 rounded bg-surface-raised px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-500">
+                              <span className="ml-2 rounded bg-cream px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-500">
                                 Not counted
                               </span>
                             )}

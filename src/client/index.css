@@ -1,9 +1,10 @@
 @import "tailwindcss";
 
 @theme {
-  --color-surface: oklch(0.21 0.02 260);
-  --color-surface-raised: oklch(0.26 0.02 260);
-  --color-edge: oklch(0.34 0.02 260);
+  --color-surface: oklch(0.99 0.006 85);
+  --color-surface-raised: oklch(0.94 0.01 85);
+  --color-cream: oklch(0.9 0.035 85);
+  --color-edge: oklch(0.82 0.02 85);
 }
 
 html,
@@ -13,7 +14,7 @@ body,
 }
 
 body {
-  background-color: oklch(0.17 0.02 260);
-  color: oklch(0.95 0.01 260);
+  background-color: oklch(0.93 0.016 85);
+  color: oklch(0.22 0.015 85);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
