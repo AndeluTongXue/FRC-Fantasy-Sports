@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "deploy": "npm run build && wrangler deploy",
-    "typecheck": "tsc -b --noEmit false --emitDeclarationOnly false",
+    "typecheck": "tsc -b",
     "db:migrate:local": "wrangler d1 migrations apply frc-fantasy-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply frc-fantasy-db --remote",
     "cf-typegen": "wrangler types"
