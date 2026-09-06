@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@theme {
+  --color-surface: oklch(0.21 0.02 260);
+  --color-surface-raised: oklch(0.26 0.02 260);
+  --color-edge: oklch(0.34 0.02 260);
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  background-color: oklch(0.17 0.02 260);
+  color: oklch(0.95 0.01 260);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}

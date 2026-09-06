@@ -1,0 +1,3 @@
+# Copy to .dev.vars and fill in. Never commit .dev.vars.
+# Get a TBA key at https://www.thebluealliance.com/account
+TBA_API_KEY=your-tba-read-api-key-here

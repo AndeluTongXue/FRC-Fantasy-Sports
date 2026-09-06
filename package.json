@@ -1,0 +1,35 @@
+{
+  "name": "frc-fantasy",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "deploy": "npm run build && wrangler deploy",
+    "typecheck": "tsc -b --noEmit false --emitDeclarationOnly false",
+    "db:migrate:local": "wrangler d1 migrations apply frc-fantasy-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply frc-fantasy-db --remote",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "hono": "^4.6.14",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.1.1"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.0.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^26.4.1",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "wrangler": "^4.0.0",
+    "ws": "^8.21.3"
+  }
+}

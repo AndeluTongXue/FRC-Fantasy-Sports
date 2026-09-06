@@ -1,0 +1,43 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "frc-fantasy",
+  "main": "src/server/index.ts",
+  "compatibility_date": "2025-05-05",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "SEASON_YEAR": "2026"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "frc-fantasy-db",
+      "database_id": "local-dev-placeholder",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "DRAFT_ROOM",
+        "class_name": "DraftRoom"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["DraftRoom"]
+    }
+  ],
+  "triggers": {
+    "crons": ["*/10 * * * *"]
+  }
+}
