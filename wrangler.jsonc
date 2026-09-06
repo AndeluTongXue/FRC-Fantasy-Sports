@@ -19,7 +19,7 @@
     {
       "binding": "DB",
       "database_name": "frc-fantasy-db",
-      "database_id": "local-dev-placeholder",
+      "database_id": "0c847ab4-7d91-4576-95d2-5b9ccbfa8aaa",
       "migrations_dir": "migrations"
     }
   ],
