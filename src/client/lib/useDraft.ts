@@ -1,15 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DraftClientMessage, DraftServerMessage, DraftState } from "../../shared/types";
 
-export function useDraft(leagueId: string) {
+/** Fires a browser notification, but only when the tab isn't the one the user is looking at. */
+function notify(title: string, body: string) {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  if (document.visibilityState === "visible" && document.hasFocus()) return;
+  try {
+    new Notification(title, { body, tag: "frc-fantasy-draft" });
+  } catch {
+    // Some mobile browsers require a service worker registration for Notification; skip silently.
+  }
+}
+
+export function useDraft(leagueId: string, userId: string | null) {
   const [state, setState] = useState<DraftState | null>(null);
   const [error, setError] = useState("");
   const [connected, setConnected] = useState(false);
   const socketRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+  }, []);
+
+  useEffect(() => {
     let closed = false;
     let retry: ReturnType<typeof setTimeout>;
+    let previous: DraftState | null = null;
 
     function open() {
       const protocol = location.protocol === "https:" ? "wss" : "ws";
@@ -19,8 +37,23 @@ export function useDraft(leagueId: string) {
       socket.onopen = () => setConnected(true);
       socket.onmessage = (event) => {
         const message = JSON.parse(event.data as string) as DraftServerMessage;
-        if (message.type === "state") setState(message.state);
-        else setError(message.message);
+        if (message.type === "state") {
+          const next = message.state;
+          if (previous) {
+            if (previous.status !== "active" && next.status === "active") {
+              notify("Draft started", "The draft is underway — head to the draft room.");
+            }
+            const wasMyTurn = previous.status === "active" && previous.currentUserId === userId;
+            const isMyTurn = next.status === "active" && next.currentUserId === userId;
+            if (isMyTurn && !wasMyTurn) {
+              notify("You're on the clock", "It's your turn to draft.");
+            }
+          }
+          previous = next;
+          setState(next);
+        } else {
+          setError(message.message);
+        }
       };
       socket.onclose = () => {
         setConnected(false);
@@ -34,7 +67,7 @@ export function useDraft(leagueId: string) {
       clearTimeout(retry);
       socketRef.current?.close();
     };
-  }, [leagueId]);
+  }, [leagueId, userId]);
 
   const send = useCallback((message: DraftClientMessage) => {
     const socket = socketRef.current;
