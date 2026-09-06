@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useCountdown, useDraft } from "../lib/useDraft";
+import { useTurnNotification } from "../lib/useTurnNotification";
 import type { LeagueDetail } from "./League";
 
 interface PoolTeam {
@@ -21,6 +22,8 @@ export function Draft() {
   const [pool, setPool] = useState<PoolTeam[]>([]);
   const [search, setSearch] = useState("");
   const remaining = useCountdown(state?.deadline ?? null);
+  const { status: notifyStatus, alertsOn, request: requestNotify, toggle: toggleNotify } =
+    useTurnNotification(state, user?.id, leagueId, detail?.league.name ?? "Draft");
 
   useEffect(() => {
     api.get<LeagueDetail>(`/leagues/${leagueId}`).then(setDetail).catch(() => setDetail(null));
@@ -58,6 +61,34 @@ export function Draft() {
         <span className={`text-xs ${connected ? "text-emerald-600" : "text-amber-600"}`}>
           {connected ? "● live" : "○ reconnecting"}
         </span>
+        {notifyStatus === "default" && (
+          <button
+            type="button"
+            onClick={requestNotify}
+            title="Get a browser notification when it's your turn to pick"
+            className="rounded-md border border-edge bg-surface px-3 py-1.5 text-xs text-slate-600 hover:border-sky-600 hover:text-slate-900"
+          >
+            🔔 Enable turn alerts
+          </button>
+        )}
+        {notifyStatus === "granted" && (
+          <button
+            type="button"
+            onClick={toggleNotify}
+            title={alertsOn ? "Turn alerts are on — click to mute" : "Turn alerts are muted — click to unmute"}
+            className="rounded-md border border-edge bg-surface px-3 py-1.5 text-xs text-slate-600 hover:border-sky-600 hover:text-slate-900"
+          >
+            {alertsOn ? "🔔 Alerts on" : "🔕 Alerts off"}
+          </button>
+        )}
+        {notifyStatus === "denied" && (
+          <span
+            title="Notifications are blocked for this site — allow them in your browser settings to get turn alerts"
+            className="text-xs text-slate-400"
+          >
+            🔕 Alerts blocked
+          </span>
+        )}
       </div>
 
       {error && (
