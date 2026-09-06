@@ -3,10 +3,12 @@ import { Link } from "react-router-dom";
 import type { FrcEvent } from "../../shared/types";
 import { api } from "../lib/api";
 
-interface RecommendedCap {
-  recommendedCap: number;
-  averagePrice: number;
-  sampleSize: number;
+interface MinimumCap {
+  minimumCap: number;
+  worstCaseAveragePrice: number;
+  poolSize: number;
+  universeSize: number;
+  insufficientPool: boolean;
 }
 
 interface LeagueSummary {
@@ -41,7 +43,7 @@ export function Leagues() {
   const [rosterSize, setRosterSize] = useState(6);
   const [salaryCap, setSalaryCap] = useState(200);
   const [inviteCode, setInviteCode] = useState("");
-  const [recommendation, setRecommendation] = useState<RecommendedCap | null>(null);
+  const [minimumCap, setMinimumCap] = useState<MinimumCap | null>(null);
 
   async function refresh() {
     const data = await api.get<{ leagues: LeagueSummary[] }>("/leagues");
@@ -60,7 +62,7 @@ export function Leagues() {
 
   useEffect(() => {
     if (leagueType === "single_event" && !eventKey) {
-      setRecommendation(null);
+      setMinimumCap(null);
       return;
     }
     const params = new URLSearchParams({ leagueType, rosterSize: String(rosterSize) });
@@ -68,9 +70,9 @@ export function Leagues() {
 
     const timer = setTimeout(() => {
       api
-        .get<RecommendedCap>(`/leagues/recommended-cap?${params}`)
-        .then(setRecommendation)
-        .catch(() => setRecommendation(null));
+        .get<MinimumCap>(`/leagues/minimum-cap?${params}`)
+        .then(setMinimumCap)
+        .catch(() => setMinimumCap(null));
     }, 250);
     return () => clearTimeout(timer);
   }, [leagueType, eventKey, rosterSize]);
@@ -211,18 +213,24 @@ export function Leagues() {
                 onChange={(event) => setSalaryCap(Number(event.target.value))}
                 className="w-full rounded-md border border-edge bg-surface-raised px-3 py-2 outline-none focus:border-sky-500"
               />
-              {recommendation && (
+              {minimumCap && (
                 <span className="mt-1 block text-xs text-slate-500">
-                  Recommended: ${recommendation.recommendedCap} (avg ${recommendation.averagePrice} ×{" "}
-                  {rosterSize} teams, from {recommendation.sampleSize}{" "}
-                  {leagueType === "season" ? "top-priced teams" : "teams at this event"}){" "}
+                  Minimum: ${minimumCap.minimumCap} — the smallest cap that guarantees every manager can
+                  still fill their roster, worst case (based on the {minimumCap.poolSize}{" "}
+                  {leagueType === "season" ? "top-priced" : "priciest"} teams in the pool){" "}
                   <button
                     type="button"
-                    onClick={() => setSalaryCap(recommendation.recommendedCap)}
+                    onClick={() => setSalaryCap(minimumCap.minimumCap)}
                     className="text-sky-600 hover:underline"
                   >
                     Use this
                   </button>
+                  {minimumCap.insufficientPool && (
+                    <span className="mt-1 block text-amber-700">
+                      Only {minimumCap.universeSize} teams are available — not enough for every manager to
+                      fill a full roster regardless of cap. Lower the roster size or manager count.
+                    </span>
+                  )}
                 </span>
               )}
             </label>

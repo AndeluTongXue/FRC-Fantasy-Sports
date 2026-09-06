@@ -40,10 +40,12 @@ export function League() {
   const [capInput, setCapInput] = useState("");
   const [savingCap, setSavingCap] = useState(false);
   const [capError, setCapError] = useState("");
-  const [capRecommendation, setCapRecommendation] = useState<{
-    recommendedCap: number;
-    averagePrice: number;
-    sampleSize: number;
+  const [capMinimum, setCapMinimum] = useState<{
+    minimumCap: number;
+    worstCaseAveragePrice: number;
+    poolSize: number;
+    universeSize: number;
+    insufficientPool: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -65,17 +67,25 @@ export function League() {
   function startEditingCap() {
     setCapInput(String(league.salaryCap));
     setCapError("");
-    setCapRecommendation(null);
+    setCapMinimum(null);
     setEditingCap(true);
 
-    const params = new URLSearchParams({ leagueType: league.leagueType, rosterSize: String(league.rosterSize) });
+    const params = new URLSearchParams({
+      leagueType: league.leagueType,
+      rosterSize: String(league.rosterSize),
+      maxMembers: String(league.maxMembers),
+    });
     if (league.eventKey) params.set("eventKey", league.eventKey);
     api
-      .get<{ recommendedCap: number; averagePrice: number; sampleSize: number }>(
-        `/leagues/recommended-cap?${params}`,
-      )
-      .then(setCapRecommendation)
-      .catch(() => setCapRecommendation(null));
+      .get<{
+        minimumCap: number;
+        worstCaseAveragePrice: number;
+        poolSize: number;
+        universeSize: number;
+        insufficientPool: boolean;
+      }>(`/leagues/minimum-cap?${params}`)
+      .then(setCapMinimum)
+      .catch(() => setCapMinimum(null));
   }
 
   async function saveCap() {
@@ -148,17 +158,23 @@ export function League() {
                 >
                   Cancel
                 </button>
-                {capRecommendation && (
+                {capMinimum && (
                   <span className="block w-full text-xs text-slate-500">
-                    Recommended: ${capRecommendation.recommendedCap} (avg ${capRecommendation.averagePrice} ×{" "}
-                    {league.rosterSize} teams){" "}
+                    Minimum: ${capMinimum.minimumCap} — guarantees every manager can still fill their
+                    roster, worst case (from the {capMinimum.poolSize} priciest teams in the pool){" "}
                     <button
                       type="button"
-                      onClick={() => setCapInput(String(capRecommendation.recommendedCap))}
+                      onClick={() => setCapInput(String(capMinimum.minimumCap))}
                       className="text-sky-600 hover:underline"
                     >
                       Use this
                     </button>
+                    {capMinimum.insufficientPool && (
+                      <span className="mt-1 block text-amber-700">
+                        Only {capMinimum.universeSize} teams are available — not enough for every manager
+                        to fill a full roster regardless of cap.
+                      </span>
+                    )}
                   </span>
                 )}
               </span>

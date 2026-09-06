@@ -4,7 +4,7 @@ import { DEFAULT_SCORING } from "../../shared/types";
 import type { AppContext } from "../lib/context";
 import { requireAuth } from "../lib/context";
 import { seasonYear } from "../lib/env";
-import { pricingYearForLeague, recommendedSalaryCap } from "../lib/pricing";
+import { minimumSalaryCap, pricingYearForLeague } from "../lib/pricing";
 import { syncAndScoreLeague } from "../lib/scores";
 import { DEFAULT_TEAM_PRICE } from "../lib/statbotics";
 import { syncEventTeams } from "../lib/sync";
@@ -188,11 +188,11 @@ leagueRoutes.post("/join", async (c) => {
 });
 
 /**
- * A starting-point salary cap for the league-creation form (and the pre-draft budget
- * editor). Registered ahead of GET /:id so the literal path "recommended-cap" is never
+ * The smallest safe salary cap for the league-creation form (and the pre-draft budget
+ * editor). Registered ahead of GET /:id so the literal path "minimum-cap" is never
  * swallowed by the :id param.
  */
-leagueRoutes.get("/recommended-cap", async (c) => {
+leagueRoutes.get("/minimum-cap", async (c) => {
   const leagueType = c.req.query("leagueType") === "season" ? "season" : "single_event";
   const eventKey = c.req.query("eventKey")?.trim() || null;
   const rosterSize = clamp(c.req.query("rosterSize"), 3, 10, 6);
@@ -202,7 +202,7 @@ leagueRoutes.get("/recommended-cap", async (c) => {
     return c.json({ error: "eventKey is required for a single-event league" }, 400);
   }
 
-  const recommendation = await recommendedSalaryCap(c.env.DB, {
+  const minimum = await minimumSalaryCap(c.env.DB, {
     league_type: leagueType,
     event_key: eventKey,
     season_year: seasonYear(c.env),
@@ -210,10 +210,10 @@ leagueRoutes.get("/recommended-cap", async (c) => {
     max_members: maxMembers,
   });
 
-  if (!recommendation) {
+  if (!minimum) {
     return c.json({ error: "No priced teams found for that pool yet" }, 404);
   }
-  return c.json(recommendation);
+  return c.json(minimum);
 });
 
 leagueRoutes.get("/:id", async (c) => {

@@ -29,7 +29,7 @@ export async function pricingYearForLeague(db: D1Database, league: LeaguePricing
   return league.season_year - 1;
 }
 
-export interface RecommendedCapParams {
+export interface MinimumCapParams {
   league_type: string;
   event_key: string | null;
   season_year: number;
@@ -37,60 +37,85 @@ export interface RecommendedCapParams {
   max_members: number;
 }
 
-export interface RecommendedCap {
-  recommendedCap: number;
-  averagePrice: number;
-  sampleSize: number;
+export interface MinimumCap {
+  minimumCap: number;
+  /** minimumCap / rosterSize, for a "per-team" figure to display alongside it. */
+  worstCaseAveragePrice: number;
+  /** How many teams the worst-case calculation actually drew from (≤ maxMembers × rosterSize). */
+  poolSize: number;
+  /** Total teams in the relevant universe (event roster, or all cached teams for the year). */
+  universeSize: number;
+  /** True if there aren't even enough teams for every manager to fill a full roster —
+   * no cap can fix that; roster size or manager count needs to come down instead. */
+  insufficientPool: boolean;
 }
 
 /**
- * A starting-point salary cap: the average price of a league's draftable pool, times how
- * many teams one owner drafts. That's a budget which lets an "average" roster be built at
- * roughly average prices, with room to spend more on stars and less on the rest.
+ * The smallest salary cap that's *guaranteed* safe: no matter how the draft unfolds, no
+ * manager can be left unable to afford a full roster.
  *
- * For a single-event league the pool is just every team at that event — small and bounded,
- * so a plain average is meaningful. A season-long league's pool is the *entire* season
- * (3000+ teams), most of which are far below what any real roster looks like, so a plain
- * average would recommend an unhelpfully tiny cap. Instead it estimates from the slice of
- * teams that could actually end up drafted — the top (maxMembers × rosterSize) priced
- * teams — since ownership is exclusive and a small league never drafts deep into the pool.
+ * Ownership is exclusive, so across the whole league at most (maxMembers × rosterSize)
+ * teams ever get drafted — the "relevant pool." The worst realistic case for any one
+ * manager is being forced into the rosterSize *most expensive* teams within that pool
+ * (e.g. if the cheaper tier gets bought up by others before their turn). A cap at or above
+ * the sum of those prices means that worst case is always affordable, which is exactly the
+ * guarantee the live draft room's reserve-budget rule depends on to never strand a manager
+ * (see DraftRoom's cheapestAvailable/reserve check). Rounded *up* to the nearest $5 so
+ * rounding can never eat into the safety margin.
  */
-export async function recommendedSalaryCap(
-  db: D1Database,
-  params: RecommendedCapParams,
-): Promise<RecommendedCap | null> {
+export async function minimumSalaryCap(db: D1Database, params: MinimumCapParams): Promise<MinimumCap | null> {
   const pricingYear = await pricingYearForLeague(db, params);
+  const totalNeeded = Math.max(params.max_members * params.roster_size, 1);
+
+  let universeSize: number;
+  let topPrices: number[];
 
   if (params.league_type === "single_event" && params.event_key) {
-    const row = await db
+    const countRow = await db
+      .prepare("SELECT COUNT(*) AS n FROM event_teams WHERE event_key = ?")
+      .bind(params.event_key)
+      .first<{ n: number }>();
+    universeSize = countRow?.n ?? 0;
+    if (universeSize === 0) return null;
+
+    const { results } = await db
       .prepare(
-        `SELECT AVG(COALESCE(p.price, ?)) AS avg_price, COUNT(*) AS n
+        `SELECT COALESCE(p.price, ?) AS price
          FROM event_teams et
          LEFT JOIN team_prices p ON p.team_key = et.team_key AND p.season_year = ?
-         WHERE et.event_key = ?`,
+         WHERE et.event_key = ?
+         ORDER BY price DESC
+         LIMIT ?`,
       )
-      .bind(DEFAULT_TEAM_PRICE, pricingYear, params.event_key)
-      .first<{ avg_price: number | null; n: number }>();
-    if (!row || row.n === 0) return null;
-    return toRecommendation(row.avg_price ?? DEFAULT_TEAM_PRICE, row.n, params.roster_size);
+      .bind(DEFAULT_TEAM_PRICE, pricingYear, params.event_key, Math.min(totalNeeded, universeSize))
+      .all<{ price: number }>();
+    topPrices = results.map((row) => row.price);
+  } else {
+    const countRow = await db
+      .prepare("SELECT COUNT(*) AS n FROM team_prices WHERE season_year = ?")
+      .bind(pricingYear)
+      .first<{ n: number }>();
+    universeSize = countRow?.n ?? 0;
+    if (universeSize === 0) return null;
+
+    const { results } = await db
+      .prepare("SELECT price FROM team_prices WHERE season_year = ? ORDER BY price DESC LIMIT ?")
+      .bind(pricingYear, Math.min(totalNeeded, universeSize))
+      .all<{ price: number }>();
+    topPrices = results.map((row) => row.price);
   }
 
-  const poolSize = Math.max(params.max_members * params.roster_size, 1);
-  const row = await db
-    .prepare(
-      `SELECT AVG(price) AS avg_price, COUNT(*) AS n
-       FROM (SELECT price FROM team_prices WHERE season_year = ? ORDER BY price DESC LIMIT ?)`,
-    )
-    .bind(pricingYear, poolSize)
-    .first<{ avg_price: number | null; n: number }>();
-  if (!row || row.n === 0) return null;
-  return toRecommendation(row.avg_price ?? DEFAULT_TEAM_PRICE, row.n, params.roster_size);
-}
+  if (topPrices.length === 0) return null;
 
-function toRecommendation(averagePrice: number, sampleSize: number, rosterSize: number): RecommendedCap {
+  const worstCaseRoster = topPrices.slice(0, Math.min(params.roster_size, topPrices.length));
+  const rawMinimum = worstCaseRoster.reduce((sum, price) => sum + price, 0);
+  const minimumCap = Math.ceil(rawMinimum / 5) * 5;
+
   return {
-    averagePrice: Math.round(averagePrice * 10) / 10,
-    recommendedCap: Math.round((averagePrice * rosterSize) / 5) * 5,
-    sampleSize,
+    minimumCap,
+    worstCaseAveragePrice: Math.round((minimumCap / params.roster_size) * 10) / 10,
+    poolSize: topPrices.length,
+    universeSize,
+    insufficientPool: universeSize < totalNeeded,
   };
 }

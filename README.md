@@ -22,8 +22,12 @@ everything, and a Durable Object runs each live draft room.
 
 **Draft** — snake order, but every team carries a fixed price and each owner has a salary
 cap. You draft in turn and can take any team you can still afford, with a guard that stops
-you spending so much you can't fill your roster. Each pick has a clock; if it expires, the
-best affordable team is auto-drafted.
+you spending so much you can't fill your roster (the client mirrors this exactly, so a team
+that would trigger it shows as unavailable before you even click). Each pick has a clock; if
+it expires, the best affordable team within that same guard is auto-drafted — or, in the
+rare case nothing qualifies (the cheap tier got bought up before your turn), the pick is
+skipped and that roster slot goes unfilled; the draft room shows a warning when this is
+about to happen to you.
 
 **Pricing** — teams are priced from a Statbotics final EPA percentile ($5–$75), cached
 permanently in D1 (rows are keyed by the literal EPA year fetched, so multiple years can be
@@ -40,14 +44,17 @@ a year. See `pricingYearForLeague` in [`src/server/lib/pricing.ts`](src/server/l
 The admin pricing endpoint (`POST /api/admin/price-teams?year=`) defaults to last year;
 pass the current season explicitly once it's over to price offseason-event leagues from it.
 
-**Recommended cap** — league creation (and the pre-draft budget editor) suggest a starting
-salary cap: the average price of the draftable pool times how many teams one owner drafts.
-For a single-event league that's a plain average over that event's (small) roster. A
-season-long league's pool is the entire season — 3000+ teams, most far below what any real
-roster looks like — so a plain average would suggest an unhelpfully tiny cap; instead it
-averages the top `maxMembers × rosterSize` priced teams, since ownership is exclusive and a
-small league never drafts deep into the full pool anyway. See `recommendedSalaryCap` in
-[`src/server/lib/pricing.ts`](src/server/lib/pricing.ts).
+**Minimum cap** — league creation (and the pre-draft budget editor) suggest a starting
+salary cap: the smallest cap that's *guaranteed* safe, no matter how the draft unfolds.
+Ownership is exclusive, so across a whole league at most `maxMembers × rosterSize` teams
+ever get drafted — the "relevant pool" (for a single-event league that's just its own
+roster; a season-long league's pool would otherwise be the entire season's 3000+ teams,
+so it's capped the same way). The worst case for any one manager is being forced into the
+`rosterSize` *most expensive* teams within that pool (e.g. if the cheap tier gets bought up
+by others before their turn) — the minimum cap is the sum of those prices, rounded **up**
+to the nearest $5 so rounding never eats into the safety margin. This is exactly the
+guarantee the live draft room's reserve-budget rule (below) depends on to never strand a
+manager. See `minimumSalaryCap` in [`src/server/lib/pricing.ts`](src/server/lib/pricing.ts).
 
 **Scoring** — from The Blue Alliance only:
 
@@ -108,7 +115,7 @@ node scripts/draft-smoke.mjs         # turn order, budget guards, snake reversal
 node scripts/season-smoke.mjs        # season-long scoring, including the best-2-regular-events cap
 node scripts/delete-league-smoke.mjs # commissioner-only delete, D1 cleanup, draft room teardown
 node scripts/edit-budget-smoke.mjs   # commissioner-only, pre-draft-only salary cap editing
-node scripts/recommended-cap-smoke.mjs # suggested budget for both single-event and season-long leagues
+node scripts/minimum-cap-smoke.mjs   # minimum-cap math + a live adversarial draft proving the guarantee holds
 ```
 
 ## Deploying to Cloudflare
