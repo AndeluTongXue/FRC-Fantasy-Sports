@@ -41,6 +41,7 @@ export function Leagues() {
   const [leagueType, setLeagueType] = useState<"single_event" | "season">("single_event");
   const [eventKey, setEventKey] = useState("");
   const [rosterSize, setRosterSize] = useState(6);
+  const [maxMembers, setMaxMembers] = useState(8);
   const [salaryCap, setSalaryCap] = useState(200);
   const [inviteCode, setInviteCode] = useState("");
   const [minimumCap, setMinimumCap] = useState<MinimumCap | null>(null);
@@ -65,7 +66,11 @@ export function Leagues() {
       setMinimumCap(null);
       return;
     }
-    const params = new URLSearchParams({ leagueType, rosterSize: String(rosterSize) });
+    const params = new URLSearchParams({
+      leagueType,
+      rosterSize: String(rosterSize),
+      maxMembers: String(maxMembers),
+    });
     if (eventKey) params.set("eventKey", eventKey);
 
     const timer = setTimeout(() => {
@@ -75,7 +80,7 @@ export function Leagues() {
         .catch(() => setMinimumCap(null));
     }, 250);
     return () => clearTimeout(timer);
-  }, [leagueType, eventKey, rosterSize]);
+  }, [leagueType, eventKey, rosterSize, maxMembers]);
 
   async function createLeague(event: React.FormEvent) {
     event.preventDefault();
@@ -86,6 +91,7 @@ export function Leagues() {
         leagueType,
         eventKey: leagueType === "single_event" ? eventKey : null,
         rosterSize,
+        maxMembers,
         salaryCap,
       });
       setMode("none");
@@ -198,6 +204,18 @@ export function Leagues() {
                 max={10}
                 value={rosterSize}
                 onChange={(event) => setRosterSize(Number(event.target.value))}
+                className="w-full rounded-md border border-edge bg-surface-raised px-3 py-2 outline-none focus:border-sky-500"
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-1 block text-sm text-slate-700">Max managers</span>
+              <input
+                type="number"
+                min={2}
+                max={16}
+                value={maxMembers}
+                onChange={(event) => setMaxMembers(Number(event.target.value))}
                 className="w-full rounded-md border border-edge bg-surface-raised px-3 py-2 outline-none focus:border-sky-500"
               />
             </label>
