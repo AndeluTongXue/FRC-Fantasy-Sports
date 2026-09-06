@@ -4,6 +4,7 @@ import { DEFAULT_SCORING } from "../../shared/types";
 import type { AppContext } from "../lib/context";
 import { requireAuth } from "../lib/context";
 import { seasonYear } from "../lib/env";
+import { pricingYearForLeague } from "../lib/pricing";
 import { syncAndScoreLeague } from "../lib/scores";
 import { DEFAULT_TEAM_PRICE } from "../lib/statbotics";
 import { syncEventTeams } from "../lib/sync";
@@ -298,7 +299,8 @@ leagueRoutes.get("/:id/pool", async (c) => {
     return c.json({ error: "You're not in this league" }, 403);
   }
 
-  const bindings: unknown[] = [DEFAULT_TEAM_PRICE, league.season_year, leagueId];
+  const pricingYear = await pricingYearForLeague(c.env.DB, league);
+  const bindings: unknown[] = [DEFAULT_TEAM_PRICE, pricingYear, leagueId];
   let poolClause = "1 = 1";
   if (league.league_type === "single_event" && league.event_key) {
     poolClause = "t.team_key IN (SELECT team_key FROM event_teams WHERE event_key = ?)";

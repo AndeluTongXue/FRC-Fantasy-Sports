@@ -25,10 +25,20 @@ cap. You draft in turn and can take any team you can still afford, with a guard 
 you spending so much you can't fill your roster. Each pick has a clock; if it expires, the
 best affordable team is auto-drafted.
 
-**Pricing** — teams are priced from the *previous* season's final Statbotics EPA percentile
-($5–$75). Statbotics is read only by this one job and cached permanently in D1, so its
-frequent outages never affect a draft or in-season scoring. Teams with no prior EPA (rookies)
-fall back to $10.
+**Pricing** — teams are priced from a Statbotics final EPA percentile ($5–$75), cached
+permanently in D1 (rows are keyed by the literal EPA year fetched, so multiple years can be
+cached at once without clobbering each other). Statbotics is read only by this one job — its
+frequent outages never affect a draft or in-season scoring — and teams with no cached EPA
+(rookies) fall back to $10.
+
+Which year a league prices from depends on the *season* it drafts for, not the calendar
+year: a league drafting for a season still in progress uses last year's final EPA, since
+this year's isn't complete yet. The one exception is a single-event league tied to an
+**Offseason** event (Chezy Champs, IRI, etc.) — those happen after the season has fully
+concluded, so that season's own EPA is both final and far more current than reaching back
+a year. See `pricingYearForLeague` in [`src/server/lib/pricing.ts`](src/server/lib/pricing.ts).
+The admin pricing endpoint (`POST /api/admin/price-teams?year=`) defaults to last year;
+pass the current season explicitly once it's over to price offseason-event leagues from it.
 
 **Scoring** — from The Blue Alliance only:
 

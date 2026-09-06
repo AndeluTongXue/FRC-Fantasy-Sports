@@ -52,7 +52,7 @@ async function fetchPage(year: number, offset: number): Promise<StatboticsTeamYe
   throw new Error(`Statbotics unavailable (${lastError})`);
 }
 
-async function writePrices(env: Env, seasonYear: number, page: StatboticsTeamYear[]): Promise<number> {
+async function writePrices(env: Env, epaYear: number, page: StatboticsTeamYear[]): Promise<number> {
   const now = Date.now();
   const statements = page
     .filter((entry) => entry.epa?.ranks?.total?.percentile != null)
@@ -64,7 +64,7 @@ async function writePrices(env: Env, seasonYear: number, page: StatboticsTeamYea
            price = excluded.price, epa = excluded.epa,
            source = excluded.source, updated_at = excluded.updated_at`,
       ).bind(
-        seasonYear,
+        epaYear,
         `frc${entry.team}`,
         priceForPercentile(entry.epa!.ranks!.total!.percentile!),
         entry.epa!.total_points,
@@ -79,23 +79,22 @@ async function writePrices(env: Env, seasonYear: number, page: StatboticsTeamYea
 }
 
 /**
- * Seeds draft prices for `seasonYear` from the *previous* season's final EPA.
- * Statbotics is only read here — never during a draft or in-season scoring — and each
- * page is written as it arrives, so a mid-run outage keeps its progress and re-running
- * just fills in the rest.
+ * Caches final EPA from Statbotics for `epaYear`, one row per team keyed by that literal
+ * year (not a "target season" derived from it) — so a league drafting from prior-season
+ * EPA and a league drafting from the just-finished season's EPA can both have cached
+ * prices at once without overwriting each other. See `pricingYearForLeague` for which
+ * year applies to which league. Statbotics is only read here — never during a draft or
+ * in-season scoring — and each page is written as it arrives, so a mid-run outage keeps
+ * its progress and re-running just fills in the rest.
  */
-export async function priceTeamsFromStatbotics(
-  env: Env,
-  seasonYear: number,
-): Promise<{ priced: number; sourceYear: number }> {
-  const sourceYear = seasonYear - 1;
+export async function priceTeamsFromStatbotics(env: Env, epaYear: number): Promise<{ priced: number; epaYear: number }> {
   let priced = 0;
 
   for (let offset = 0; offset < 10_000; offset += PAGE_SIZE) {
-    const page = await fetchPage(sourceYear, offset);
-    priced += await writePrices(env, seasonYear, page);
+    const page = await fetchPage(epaYear, offset);
+    priced += await writePrices(env, epaYear, page);
     if (page.length < PAGE_SIZE) break;
   }
 
-  return { priced, sourceYear };
+  return { priced, epaYear };
 }

@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import type { DraftClientMessage, DraftServerMessage, DraftState } from "../../shared/types";
 import { pickOwner } from "../../shared/types";
 import type { Env } from "../lib/env";
+import { pricingYearForLeague } from "../lib/pricing";
 import { DEFAULT_TEAM_PRICE } from "../lib/statbotics";
 
 interface LeagueConfig {
@@ -186,13 +187,14 @@ export class DraftRoom extends DurableObject<Env> {
   private async cheapestAvailable(league: LeagueConfig): Promise<number> {
     const pool = this.poolFilter(league);
     const taken = this.takenPlaceholders();
+    const pricingYear = await pricingYearForLeague(this.env.DB, league);
     const row = await this.env.DB.prepare(
       `SELECT MIN(COALESCE(p.price, ?)) AS min_price
        FROM teams t
        LEFT JOIN team_prices p ON p.team_key = t.team_key AND p.season_year = ?
        WHERE ${pool.clause} AND ${taken.clause}`,
     )
-      .bind(DEFAULT_TEAM_PRICE, league.season_year, ...pool.bindings, ...taken.bindings)
+      .bind(DEFAULT_TEAM_PRICE, pricingYear, ...pool.bindings, ...taken.bindings)
       .first<{ min_price: number | null }>();
     return row?.min_price ?? DEFAULT_TEAM_PRICE;
   }
@@ -203,6 +205,7 @@ export class DraftRoom extends DurableObject<Env> {
   ): Promise<{ teamKey: string; price: number } | null> {
     const pool = this.poolFilter(league);
     const taken = this.takenPlaceholders();
+    const pricingYear = await pricingYearForLeague(this.env.DB, league);
     const row = await this.env.DB.prepare(
       `SELECT t.team_key, COALESCE(p.price, ?) AS price
        FROM teams t
@@ -213,7 +216,7 @@ export class DraftRoom extends DurableObject<Env> {
     )
       .bind(
         DEFAULT_TEAM_PRICE,
-        league.season_year,
+        pricingYear,
         ...pool.bindings,
         ...taken.bindings,
         DEFAULT_TEAM_PRICE,
@@ -225,13 +228,14 @@ export class DraftRoom extends DurableObject<Env> {
 
   private async priceOf(league: LeagueConfig, teamKey: string): Promise<number | null> {
     const pool = this.poolFilter(league);
+    const pricingYear = await pricingYearForLeague(this.env.DB, league);
     const row = await this.env.DB.prepare(
       `SELECT COALESCE(p.price, ?) AS price
        FROM teams t
        LEFT JOIN team_prices p ON p.team_key = t.team_key AND p.season_year = ?
        WHERE t.team_key = ? AND ${pool.clause}`,
     )
-      .bind(DEFAULT_TEAM_PRICE, league.season_year, teamKey, ...pool.bindings)
+      .bind(DEFAULT_TEAM_PRICE, pricingYear, teamKey, ...pool.bindings)
       .first<{ price: number }>();
     return row?.price ?? null;
   }

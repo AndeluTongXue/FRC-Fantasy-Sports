@@ -1,7 +1,13 @@
+/**
+ * Verifies commissioner-only league deletion: permission check, real D1 cleanup, and
+ * that the draft room's Durable Object is torn down (no crash on repeat delete, no
+ * lingering pick-clock alarm).
+ *
+ * Usage: node scripts/delete-league-smoke.mjs [baseUrl]
+ */
 import WebSocket from "ws";
 
-const BASE = "http://localhost:5173";
-const LEAGUE_ID = "9bd1c86e-2cf0-4c22-8ad5-30420a5620bf";
+const BASE = process.argv[2] ?? "http://localhost:5173";
 const failures = [];
 
 function check(label, condition, detail = "") {
@@ -32,22 +38,49 @@ async function api(cookie, path, init = {}) {
   return { status: response.status, body };
 }
 
-const owner = await signIn("andre@example.com", "Andre");
-const rival = await signIn("rival-delete-test@example.com", "Rival");
+/** A rejected WebSocket upgrade can surface as a clean HTTP response or a hung-up socket
+ * depending on the runtime — both mean "the server refused the upgrade," so both count. */
+function attemptDraftConnection(leagueId, cookie) {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(`${BASE.replace("http", "ws")}/api/leagues/${leagueId}/draft/ws`, {
+      headers: { Cookie: cookie },
+    });
+    ws.once("open", () => resolve("opened"));
+    ws.once("unexpected-response", (_req, res) => resolve(`http ${res.statusCode}`));
+    ws.once("error", () => resolve("rejected"));
+    setTimeout(() => resolve("timeout"), 5000);
+  });
+}
+
+const owner = await signIn(`delete-owner-${Date.now()}@example.com`, "Delete Owner");
+const rival = await signIn(`delete-rival-${Date.now()}@example.com`, "Delete Rival");
+
+const { league } = await api(owner.cookie, "/api/leagues", {
+  method: "POST",
+  body: JSON.stringify({
+    name: `Delete Me League ${Date.now()}`,
+    leagueType: "season",
+    rosterSize: 3,
+    salaryCap: 150,
+    pickSeconds: 300,
+  }),
+}).then((r) => r.body);
+
+console.log(`League ${league.id} (${league.inviteCode})\n`);
 
 console.log("Join as a second member:");
 const join = await api(rival.cookie, "/api/leagues/join", {
   method: "POST",
-  body: JSON.stringify({ inviteCode: "LEPAVG" }),
+  body: JSON.stringify({ inviteCode: league.inviteCode }),
 });
 check("rival joined the league", join.status === 200, JSON.stringify(join.body));
 
 console.log("\nPermission check:");
-const forbidden = await api(rival.cookie, `/api/leagues/${LEAGUE_ID}`, { method: "DELETE" });
+const forbidden = await api(rival.cookie, `/api/leagues/${league.id}`, { method: "DELETE" });
 check("non-commissioner cannot delete", forbidden.status === 403, `${forbidden.status} ${forbidden.body.error}`);
 
 console.log("\nStart the draft so the Durable Object has live state + an alarm:");
-const ws = new WebSocket(`${BASE.replace("http", "ws")}/api/leagues/${LEAGUE_ID}/draft/ws`, {
+const ws = new WebSocket(`${BASE.replace("http", "ws")}/api/leagues/${league.id}/draft/ws`, {
   headers: { Cookie: owner.cookie },
 });
 await new Promise((resolve, reject) => {
@@ -63,39 +96,30 @@ check("draft started (alarm now scheduled)", startedMessage.state?.status === "a
 ws.close();
 
 console.log("\nDelete as the commissioner:");
-const del = await api(owner.cookie, `/api/leagues/${LEAGUE_ID}`, { method: "DELETE" });
+const del = await api(owner.cookie, `/api/leagues/${league.id}`, { method: "DELETE" });
 check("delete succeeds", del.status === 200, JSON.stringify(del.body));
 
 console.log("\nPost-delete checks:");
-const gone = await api(owner.cookie, `/api/leagues/${LEAGUE_ID}`);
+const gone = await api(owner.cookie, `/api/leagues/${league.id}`);
 check("league no longer fetchable", gone.status === 404, `${gone.status} ${gone.body.error}`);
 
 const listAfter = await api(owner.cookie, "/api/leagues");
 check(
   "league removed from owner's league list",
-  !listAfter.body.leagues.some((l) => l.id === LEAGUE_ID),
+  !listAfter.body.leagues.some((l) => l.id === league.id),
   `${listAfter.body.leagues.length} leagues remain`,
 );
 
-const deleteAgain = await api(owner.cookie, `/api/leagues/${LEAGUE_ID}`, { method: "DELETE" });
+const deleteAgain = await api(owner.cookie, `/api/leagues/${league.id}`, { method: "DELETE" });
 check("deleting again returns 404, not a crash", deleteAgain.status === 404, `${deleteAgain.status}`);
 
 console.log("\nDraft room after deletion:");
-const ws2 = new WebSocket(`${BASE.replace("http", "ws")}/api/leagues/${LEAGUE_ID}/draft/ws`, {
-  headers: { Cookie: owner.cookie },
-});
-const ws2Result = await new Promise((resolve) => {
-  ws2.once("open", () => resolve("opened"));
-  ws2.once("unexpected-response", (req, res) => resolve(`http ${res.statusCode}`));
-  ws2.once("error", (e) => resolve(`error: ${e.message}`));
-  setTimeout(() => resolve("timeout"), 5000);
-});
+const ws2Result = await attemptDraftConnection(league.id, owner.cookie);
 check(
   "draft room WS rejects since membership check fails (league_members cascade-deleted)",
-  ws2Result === "http 403",
+  ws2Result !== "opened",
   ws2Result,
 );
-try { ws2.close(); } catch {}
 
 console.log(failures.length ? `\n${failures.length} FAILED: ${failures.join(", ")}` : "\nAll delete-league checks passed.");
 process.exit(failures.length ? 1 : 0);

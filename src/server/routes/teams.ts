@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { AppContext } from "../lib/context";
 import { seasonYear } from "../lib/env";
+import { pricingYearForLeague } from "../lib/pricing";
 
 interface TeamRow {
   team_key: string;
@@ -38,9 +39,14 @@ teamRoutes.get("/", async (c) => {
   const limit = Math.min(Number.parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
   const offset = Math.max(Number.parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
   const year = seasonYear(c.env);
+  // Browsing one event's teams uses that event's pricing year (current year if it's an
+  // Offseason event, since that season's EPA is final by then); otherwise last year's.
+  const pricingYear = eventKey
+    ? await pricingYearForLeague(c.env.DB, { league_type: "single_event", event_key: eventKey, season_year: year })
+    : year - 1;
 
   const conditions: string[] = [];
-  const bindings: unknown[] = [year];
+  const bindings: unknown[] = [pricingYear];
 
   if (eventKey) {
     conditions.push("t.team_key IN (SELECT team_key FROM event_teams WHERE event_key = ?)");
@@ -68,7 +74,7 @@ teamRoutes.get("/", async (c) => {
 });
 
 teamRoutes.get("/:teamKey", async (c) => {
-  const year = seasonYear(c.env);
+  const pricingYear = seasonYear(c.env) - 1;
   const row = await c.env.DB.prepare(
     `SELECT t.team_key, t.team_number, t.nickname, t.name, t.city, t.state_prov, t.country, t.rookie_year,
             p.price, p.epa
@@ -76,7 +82,7 @@ teamRoutes.get("/:teamKey", async (c) => {
      LEFT JOIN team_prices p ON p.team_key = t.team_key AND p.season_year = ?
      WHERE t.team_key = ?`,
   )
-    .bind(year, c.req.param("teamKey"))
+    .bind(pricingYear, c.req.param("teamKey"))
     .first<TeamRow>();
 
   if (!row) return c.json({ error: "Team not found" }, 404);

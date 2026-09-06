@@ -19,8 +19,14 @@ adminRoutes.post("/sync/events", async (c) => {
   return c.json({ year, events: await syncEvents(c.env, year) });
 });
 
+/**
+ * `year` here is the literal Statbotics EPA year to cache, not a "target season" — it
+ * defaults to last year (the normal preseason-pricing case for in-season leagues). Pass
+ * `?year=<current season>` once that season has concluded, to price offseason-event
+ * leagues (Chezy Champs, IRI, etc.) from that season's own final EPA instead.
+ */
 adminRoutes.post("/price-teams", async (c) => {
-  const year = Number.parseInt(c.req.query("year") ?? "", 10) || seasonYear(c.env);
+  const year = Number.parseInt(c.req.query("year") ?? "", 10) || seasonYear(c.env) - 1;
   return c.json(await priceTeamsFromStatbotics(c.env, year));
 });
 
