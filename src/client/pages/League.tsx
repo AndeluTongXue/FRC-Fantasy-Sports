@@ -40,6 +40,11 @@ export function League() {
   const [capInput, setCapInput] = useState("");
   const [savingCap, setSavingCap] = useState(false);
   const [capError, setCapError] = useState("");
+  const [capRecommendation, setCapRecommendation] = useState<{
+    recommendedCap: number;
+    averagePrice: number;
+    sampleSize: number;
+  } | null>(null);
 
   useEffect(() => {
     api
@@ -48,8 +53,8 @@ export function League() {
       .catch((caught) => setError(caught instanceof Error ? caught.message : "Failed to load league"));
   }, [leagueId]);
 
-  if (error) return <p className="text-sm text-red-400">{error}</p>;
-  if (!detail) return <p className="text-sm text-slate-400">Loading…</p>;
+  if (error) return <p className="text-sm text-red-600">{error}</p>;
+  if (!detail) return <p className="text-sm text-slate-600">Loading…</p>;
 
   const { league, members, picks } = detail;
   const spent = (userId: string) =>
@@ -60,7 +65,17 @@ export function League() {
   function startEditingCap() {
     setCapInput(String(league.salaryCap));
     setCapError("");
+    setCapRecommendation(null);
     setEditingCap(true);
+
+    const params = new URLSearchParams({ leagueType: league.leagueType, rosterSize: String(league.rosterSize) });
+    if (league.eventKey) params.set("eventKey", league.eventKey);
+    api
+      .get<{ recommendedCap: number; averagePrice: number; sampleSize: number }>(
+        `/leagues/recommended-cap?${params}`,
+      )
+      .then(setCapRecommendation)
+      .catch(() => setCapRecommendation(null));
   }
 
   async function saveCap() {
@@ -99,13 +114,13 @@ export function League() {
       <div className="mb-6 flex flex-wrap items-center gap-3">
         <div className="flex-1">
           <h1 className="text-xl font-semibold">{league.name}</h1>
-          <p className="flex flex-wrap items-center gap-x-1 text-sm text-slate-400">
+          <p className="flex flex-wrap items-center gap-x-1 text-sm text-slate-600">
             <span>
               {league.leagueType === "season" ? "Full season" : league.eventKey} · {league.rosterSize} teams
               ·
             </span>
             {editingCap ? (
-              <span className="inline-flex items-center gap-1.5">
+              <span className="inline-flex flex-wrap items-center gap-1.5">
                 $
                 <input
                   type="number"
@@ -121,7 +136,7 @@ export function League() {
                   type="button"
                   onClick={saveCap}
                   disabled={savingCap}
-                  className="rounded bg-sky-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-50"
+                  className="rounded bg-sky-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-50"
                 >
                   {savingCap ? "Saving…" : "Save"}
                 </button>
@@ -129,10 +144,23 @@ export function League() {
                   type="button"
                   onClick={() => setEditingCap(false)}
                   disabled={savingCap}
-                  className="text-xs text-slate-500 hover:text-slate-300"
+                  className="text-xs text-slate-500 hover:text-slate-700"
                 >
                   Cancel
                 </button>
+                {capRecommendation && (
+                  <span className="block w-full text-xs text-slate-500">
+                    Recommended: ${capRecommendation.recommendedCap} (avg ${capRecommendation.averagePrice} ×{" "}
+                    {league.rosterSize} teams){" "}
+                    <button
+                      type="button"
+                      onClick={() => setCapInput(String(capRecommendation.recommendedCap))}
+                      className="text-sky-600 hover:underline"
+                    >
+                      Use this
+                    </button>
+                  </span>
+                )}
               </span>
             ) : (
               <span>
@@ -141,7 +169,7 @@ export function League() {
                   <button
                     type="button"
                     onClick={startEditingCap}
-                    className="ml-1.5 text-xs text-sky-400 hover:underline"
+                    className="ml-1.5 text-xs text-sky-600 hover:underline"
                   >
                     Edit
                   </button>
@@ -149,21 +177,21 @@ export function League() {
               </span>
             )}
           </p>
-          {capError && <p className="mt-1 text-xs text-red-400">{capError}</p>}
+          {capError && <p className="mt-1 text-xs text-red-600">{capError}</p>}
         </div>
         <div className="rounded-md border border-edge bg-surface px-3 py-2 text-sm">
-          Invite code <span className="ml-1 font-mono text-sky-400">{league.inviteCode}</span>
+          Invite code <span className="ml-1 font-mono text-sky-600">{league.inviteCode}</span>
         </div>
         <Link
           to={`/leagues/${league.id}/standings`}
-          className="rounded-md border border-edge bg-surface px-4 py-2 text-sm hover:border-sky-500"
+          className="rounded-md border border-edge bg-surface px-4 py-2 text-sm hover:border-sky-600 hover:bg-cream"
         >
           Standings
         </Link>
         {league.status !== "complete" && (
           <Link
             to={`/leagues/${league.id}/draft`}
-            className="rounded-md bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500"
+            className="rounded-md bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700"
           >
             {league.status === "setup" ? "Draft room" : "Enter draft"}
           </Link>
@@ -180,7 +208,7 @@ export function League() {
                   <h2 className="font-medium">{member.rosterName}</h2>
                   <p className="text-xs text-slate-500">{member.displayName}</p>
                 </div>
-                <span className="font-mono text-sm text-slate-400">
+                <span className="font-mono text-sm text-slate-600">
                   ${league.salaryCap - spent(member.userId)} left
                 </span>
               </div>
@@ -192,8 +220,8 @@ export function League() {
                   {roster.map((pick) => (
                     <li key={pick.teamKey} className="flex justify-between gap-2 text-sm">
                       <span>
-                        <span className="font-mono font-semibold text-sky-400">{pick.teamNumber}</span>{" "}
-                        <span className="text-slate-300">{pick.nickname}</span>
+                        <span className="font-mono font-semibold text-sky-600">{pick.teamNumber}</span>{" "}
+                        <span className="text-slate-700">{pick.nickname}</span>
                       </span>
                       <span className="font-mono text-slate-500">${pick.price}</span>
                     </li>
@@ -206,12 +234,12 @@ export function League() {
       </div>
 
       {isCommissioner && (
-        <div className="mt-8 rounded-lg border border-red-900/50 bg-red-950/20 p-4">
-          <h2 className="mb-1 text-sm font-medium text-red-300">Danger zone</h2>
-          {deleteError && <p className="mb-2 text-sm text-red-400">{deleteError}</p>}
+        <div className="mt-8 rounded-lg border border-red-300 bg-red-100 p-4">
+          <h2 className="mb-1 text-sm font-medium text-red-800">Danger zone</h2>
+          {deleteError && <p className="mb-2 text-sm text-red-600">{deleteError}</p>}
           {confirmingDelete ? (
             <div className="flex flex-wrap items-center gap-3">
-              <p className="text-sm text-slate-300">
+              <p className="text-sm text-slate-700">
                 Delete “{league.name}” permanently? This removes all members, picks, and scores — it
                 can't be undone.
               </p>
@@ -220,7 +248,7 @@ export function League() {
                   type="button"
                   onClick={() => setConfirmingDelete(false)}
                   disabled={deleting}
-                  className="rounded-md border border-edge bg-surface px-3 py-1.5 text-sm hover:border-sky-500 disabled:opacity-50"
+                  className="rounded-md border border-edge bg-surface px-3 py-1.5 text-sm hover:border-sky-600 hover:bg-cream disabled:opacity-50"
                 >
                   Cancel
                 </button>
@@ -228,7 +256,7 @@ export function League() {
                   type="button"
                   onClick={deleteLeague}
                   disabled={deleting}
-                  className="rounded-md bg-red-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-50"
+                  className="rounded-md bg-red-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-50"
                 >
                   {deleting ? "Deleting…" : "Yes, delete it"}
                 </button>
@@ -238,7 +266,7 @@ export function League() {
             <button
               type="button"
               onClick={() => setConfirmingDelete(true)}
-              className="rounded-md border border-red-800 px-3 py-1.5 text-sm text-red-300 hover:bg-red-900/30"
+              className="rounded-md border border-red-400 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-200"
             >
               Delete league
             </button>

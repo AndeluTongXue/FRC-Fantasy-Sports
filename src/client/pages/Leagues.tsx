@@ -3,6 +3,12 @@ import { Link } from "react-router-dom";
 import type { FrcEvent } from "../../shared/types";
 import { api } from "../lib/api";
 
+interface RecommendedCap {
+  recommendedCap: number;
+  averagePrice: number;
+  sampleSize: number;
+}
+
 interface LeagueSummary {
   id: string;
   name: string;
@@ -35,6 +41,7 @@ export function Leagues() {
   const [rosterSize, setRosterSize] = useState(6);
   const [salaryCap, setSalaryCap] = useState(200);
   const [inviteCode, setInviteCode] = useState("");
+  const [recommendation, setRecommendation] = useState<RecommendedCap | null>(null);
 
   async function refresh() {
     const data = await api.get<{ leagues: LeagueSummary[] }>("/leagues");
@@ -50,6 +57,23 @@ export function Leagues() {
       .then((data) => setEvents(data.events))
       .catch(() => setEvents([]));
   }, []);
+
+  useEffect(() => {
+    if (leagueType === "single_event" && !eventKey) {
+      setRecommendation(null);
+      return;
+    }
+    const params = new URLSearchParams({ leagueType, rosterSize: String(rosterSize) });
+    if (eventKey) params.set("eventKey", eventKey);
+
+    const timer = setTimeout(() => {
+      api
+        .get<RecommendedCap>(`/leagues/recommended-cap?${params}`)
+        .then(setRecommendation)
+        .catch(() => setRecommendation(null));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [leagueType, eventKey, rosterSize]);
 
   async function createLeague(event: React.FormEvent) {
     event.preventDefault();
@@ -90,20 +114,20 @@ export function Leagues() {
         <button
           type="button"
           onClick={() => setMode(mode === "join" ? "none" : "join")}
-          className="rounded-md border border-edge bg-surface px-3 py-2 text-sm hover:border-sky-500"
+          className="rounded-md border border-edge bg-surface px-3 py-2 text-sm hover:border-sky-600 hover:bg-cream"
         >
           Join with code
         </button>
         <button
           type="button"
           onClick={() => setMode(mode === "create" ? "none" : "create")}
-          className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-500"
+          className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700"
         >
           New league
         </button>
       </div>
 
-      {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
+      {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
 
       {mode === "join" && (
         <form onSubmit={joinLeague} className="mb-6 flex gap-2 rounded-lg border border-edge bg-surface p-4">
@@ -114,7 +138,7 @@ export function Leagues() {
             placeholder="Invite code"
             className="flex-1 rounded-md border border-edge bg-surface-raised px-3 py-2 font-mono uppercase outline-none focus:border-sky-500"
           />
-          <button type="submit" className="rounded-md bg-sky-600 px-4 py-2 text-sm font-medium hover:bg-sky-500">
+          <button type="submit" className="rounded-md bg-sky-600 px-4 py-2 text-sm font-medium hover:bg-sky-700">
             Join
           </button>
         </form>
@@ -124,7 +148,7 @@ export function Leagues() {
         <form onSubmit={createLeague} className="mb-6 space-y-4 rounded-lg border border-edge bg-surface p-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block">
-              <span className="mb-1 block text-sm text-slate-300">League name</span>
+              <span className="mb-1 block text-sm text-slate-700">League name</span>
               <input
                 required
                 value={name}
@@ -134,7 +158,7 @@ export function Leagues() {
             </label>
 
             <label className="block">
-              <span className="mb-1 block text-sm text-slate-300">Format</span>
+              <span className="mb-1 block text-sm text-slate-700">Format</span>
               <select
                 value={leagueType}
                 onChange={(event) => setLeagueType(event.target.value as "single_event" | "season")}
@@ -147,7 +171,7 @@ export function Leagues() {
 
             {leagueType === "single_event" && (
               <label className="block sm:col-span-2">
-                <span className="mb-1 block text-sm text-slate-300">Event</span>
+                <span className="mb-1 block text-sm text-slate-700">Event</span>
                 <select
                   required
                   value={eventKey}
@@ -165,7 +189,7 @@ export function Leagues() {
             )}
 
             <label className="block">
-              <span className="mb-1 block text-sm text-slate-300">Roster size</span>
+              <span className="mb-1 block text-sm text-slate-700">Roster size</span>
               <input
                 type="number"
                 min={3}
@@ -177,7 +201,7 @@ export function Leagues() {
             </label>
 
             <label className="block">
-              <span className="mb-1 block text-sm text-slate-300">Salary cap</span>
+              <span className="mb-1 block text-sm text-slate-700">Salary cap</span>
               <input
                 type="number"
                 min={50}
@@ -187,20 +211,34 @@ export function Leagues() {
                 onChange={(event) => setSalaryCap(Number(event.target.value))}
                 className="w-full rounded-md border border-edge bg-surface-raised px-3 py-2 outline-none focus:border-sky-500"
               />
+              {recommendation && (
+                <span className="mt-1 block text-xs text-slate-500">
+                  Recommended: ${recommendation.recommendedCap} (avg ${recommendation.averagePrice} ×{" "}
+                  {rosterSize} teams, from {recommendation.sampleSize}{" "}
+                  {leagueType === "season" ? "top-priced teams" : "teams at this event"}){" "}
+                  <button
+                    type="button"
+                    onClick={() => setSalaryCap(recommendation.recommendedCap)}
+                    className="text-sky-600 hover:underline"
+                  >
+                    Use this
+                  </button>
+                </span>
+              )}
             </label>
           </div>
 
-          <button type="submit" className="rounded-md bg-sky-600 px-4 py-2 text-sm font-medium hover:bg-sky-500">
+          <button type="submit" className="rounded-md bg-sky-600 px-4 py-2 text-sm font-medium hover:bg-sky-700">
             Create league
           </button>
         </form>
       )}
 
       {loading ? (
-        <p className="text-sm text-slate-400">Loading…</p>
+        <p className="text-sm text-slate-600">Loading…</p>
       ) : leagues.length === 0 ? (
         <div className="rounded-lg border border-edge bg-surface p-8 text-center">
-          <p className="mb-2 text-slate-300">No leagues yet.</p>
+          <p className="mb-2 text-slate-700">No leagues yet.</p>
           <p className="text-sm text-slate-500">Create one, or join a friend's with their invite code.</p>
         </div>
       ) : (
@@ -209,21 +247,21 @@ export function Leagues() {
             <Link
               key={league.id}
               to={`/leagues/${league.id}`}
-              className="rounded-lg border border-edge bg-surface p-4 transition-colors hover:border-sky-500"
+              className="rounded-lg border border-edge bg-surface p-4 transition-colors hover:border-sky-600 hover:bg-cream"
             >
               <div className="flex items-start justify-between gap-2">
                 <h2 className="font-medium">{league.name}</h2>
-                <span className="shrink-0 rounded bg-surface-raised px-2 py-0.5 text-xs text-slate-400">
+                <span className="shrink-0 rounded bg-cream px-2 py-0.5 text-xs text-slate-600">
                   {statusLabels[league.status] ?? league.status}
                 </span>
               </div>
-              <p className="mt-1 text-sm text-slate-400">
+              <p className="mt-1 text-sm text-slate-600">
                 {league.leagueType === "season" ? "Full season" : league.eventKey} · {league.memberCount}{" "}
                 {league.memberCount === 1 ? "owner" : "owners"}
               </p>
               <p className="mt-2 text-xs text-slate-500">
                 {league.rosterSize} teams · ${league.salaryCap} cap · code{" "}
-                <span className="font-mono text-slate-400">{league.inviteCode}</span>
+                <span className="font-mono text-slate-600">{league.inviteCode}</span>
               </p>
             </Link>
           ))}

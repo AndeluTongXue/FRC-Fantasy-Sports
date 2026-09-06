@@ -40,6 +40,15 @@ a year. See `pricingYearForLeague` in [`src/server/lib/pricing.ts`](src/server/l
 The admin pricing endpoint (`POST /api/admin/price-teams?year=`) defaults to last year;
 pass the current season explicitly once it's over to price offseason-event leagues from it.
 
+**Recommended cap** — league creation (and the pre-draft budget editor) suggest a starting
+salary cap: the average price of the draftable pool times how many teams one owner drafts.
+For a single-event league that's a plain average over that event's (small) roster. A
+season-long league's pool is the entire season — 3000+ teams, most far below what any real
+roster looks like — so a plain average would suggest an unhelpfully tiny cap; instead it
+averages the top `maxMembers × rosterSize` priced teams, since ownership is exclusive and a
+small league never drafts deep into the full pool anyway. See `recommendedSalaryCap` in
+[`src/server/lib/pricing.ts`](src/server/lib/pricing.ts).
+
 **Scoring** — from The Blue Alliance only:
 
 | Result | Default points |
@@ -99,6 +108,7 @@ node scripts/draft-smoke.mjs         # turn order, budget guards, snake reversal
 node scripts/season-smoke.mjs        # season-long scoring, including the best-2-regular-events cap
 node scripts/delete-league-smoke.mjs # commissioner-only delete, D1 cleanup, draft room teardown
 node scripts/edit-budget-smoke.mjs   # commissioner-only, pre-draft-only salary cap editing
+node scripts/recommended-cap-smoke.mjs # suggested budget for both single-event and season-long leagues
 ```
 
 ## Deploying to Cloudflare
