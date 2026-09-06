@@ -85,6 +85,12 @@ entirely — not merely capped — since they aren't part of the official season
 single-event league tied to an offseason event (e.g. Chezy Champs) is unaffected and scores
 normally, since that's a deliberate choice, not season-long auto-discovery.
 
+**League membership** — the commissioner (whoever created the league) can edit the budget
+and delete the league at any time; any member can leave, but only before the draft starts,
+since a mid-draft roster with no owner is a bigger mess than just not allowing it. If the
+commissioner leaves and others remain, ownership passes to whoever joined earliest after
+them; if they're the only member, they're pointed at deleting the league instead.
+
 ## Local development
 
 ```bash
@@ -116,6 +122,7 @@ node scripts/season-smoke.mjs        # season-long scoring, including the best-2
 node scripts/delete-league-smoke.mjs # commissioner-only delete, D1 cleanup, draft room teardown
 node scripts/edit-budget-smoke.mjs   # commissioner-only, pre-draft-only salary cap editing
 node scripts/minimum-cap-smoke.mjs   # minimum-cap math + a live adversarial draft proving the guarantee holds
+node scripts/leave-league-smoke.mjs  # leaving pre-draft, commissioner transfer, solo-member block, post-draft lock
 ```
 
 ## Deploying to Cloudflare

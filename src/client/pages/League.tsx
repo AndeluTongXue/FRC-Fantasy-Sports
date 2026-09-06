@@ -16,7 +16,13 @@ export interface LeagueDetail {
     maxMembers: number;
     status: string;
   };
-  members: { userId: string; displayName: string; rosterName: string; draftPosition: number | null }[];
+  members: {
+    userId: string;
+    displayName: string;
+    rosterName: string;
+    draftPosition: number | null;
+    joinedAt: number;
+  }[];
   picks: {
     pickNumber: number;
     userId: string;
@@ -36,6 +42,9 @@ export function League() {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [confirmingLeave, setConfirmingLeave] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const [leaveError, setLeaveError] = useState("");
   const [editingCap, setEditingCap] = useState(false);
   const [capInput, setCapInput] = useState("");
   const [savingCap, setSavingCap] = useState(false);
@@ -63,6 +72,10 @@ export function League() {
     picks.filter((pick) => pick.userId === userId).reduce((total, pick) => total + pick.price, 0);
   const isCommissioner = league.commissionerId === user?.id;
   const canEditCap = isCommissioner && league.status === "setup";
+  const canLeave = league.status === "setup";
+  // members is already sorted by joinedAt ascending; the next-oldest other member is who'd
+  // inherit commissioner duties if the current commissioner leaves.
+  const nextCommissioner = members.find((member) => member.userId !== user?.id);
 
   function startEditingCap() {
     setCapInput(String(league.salaryCap));
@@ -104,6 +117,18 @@ export function League() {
       setCapError(caught instanceof Error ? caught.message : "Could not update budget");
     } finally {
       setSavingCap(false);
+    }
+  }
+
+  async function leaveLeague() {
+    setLeaving(true);
+    setLeaveError("");
+    try {
+      await api.post(`/leagues/${league.id}/leave`);
+      navigate("/");
+    } catch (caught) {
+      setLeaveError(caught instanceof Error ? caught.message : "Could not leave league");
+      setLeaving(false);
     }
   }
 
@@ -249,43 +274,93 @@ export function League() {
         })}
       </div>
 
-      {isCommissioner && (
+      {(canLeave || isCommissioner) && (
         <div className="mt-8 rounded-lg border border-red-300 bg-red-100 p-4">
           <h2 className="mb-1 text-sm font-medium text-red-800">Danger zone</h2>
-          {deleteError && <p className="mb-2 text-sm text-red-600">{deleteError}</p>}
-          {confirmingDelete ? (
-            <div className="flex flex-wrap items-center gap-3">
-              <p className="text-sm text-slate-700">
-                Delete “{league.name}” permanently? This removes all members, picks, and scores — it
-                can't be undone.
-              </p>
-              <div className="ml-auto flex gap-2">
+
+          {canLeave && (
+            <div className="mb-3 border-b border-red-200 pb-3 last:mb-0 last:border-0 last:pb-0">
+              {leaveError && <p className="mb-2 text-sm text-red-600">{leaveError}</p>}
+              {confirmingLeave ? (
+                <div className="flex flex-wrap items-center gap-3">
+                  <p className="text-sm text-slate-700">
+                    Leave “{league.name}”?{" "}
+                    {isCommissioner &&
+                      (nextCommissioner
+                        ? `${nextCommissioner.rosterName} will become the new commissioner.`
+                        : "You're the only member, so this isn't available — delete the league instead.")}
+                  </p>
+                  <div className="ml-auto flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingLeave(false)}
+                      disabled={leaving}
+                      className="rounded-md border border-edge bg-surface px-3 py-1.5 text-sm hover:border-sky-600 hover:bg-cream disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    {!(isCommissioner && !nextCommissioner) && (
+                      <button
+                        type="button"
+                        onClick={leaveLeague}
+                        disabled={leaving}
+                        className="rounded-md bg-red-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-50"
+                      >
+                        {leaving ? "Leaving…" : "Yes, leave"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
                 <button
                   type="button"
-                  onClick={() => setConfirmingDelete(false)}
-                  disabled={deleting}
-                  className="rounded-md border border-edge bg-surface px-3 py-1.5 text-sm hover:border-sky-600 hover:bg-cream disabled:opacity-50"
+                  onClick={() => setConfirmingLeave(true)}
+                  className="rounded-md border border-red-400 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-200"
                 >
-                  Cancel
+                  Leave league
                 </button>
-                <button
-                  type="button"
-                  onClick={deleteLeague}
-                  disabled={deleting}
-                  className="rounded-md bg-red-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-50"
-                >
-                  {deleting ? "Deleting…" : "Yes, delete it"}
-                </button>
-              </div>
+              )}
             </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setConfirmingDelete(true)}
-              className="rounded-md border border-red-400 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-200"
-            >
-              Delete league
-            </button>
+          )}
+
+          {isCommissioner && (
+            <div>
+              {deleteError && <p className="mb-2 text-sm text-red-600">{deleteError}</p>}
+              {confirmingDelete ? (
+                <div className="flex flex-wrap items-center gap-3">
+                  <p className="text-sm text-slate-700">
+                    Delete “{league.name}” permanently? This removes all members, picks, and scores — it
+                    can't be undone.
+                  </p>
+                  <div className="ml-auto flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingDelete(false)}
+                      disabled={deleting}
+                      className="rounded-md border border-edge bg-surface px-3 py-1.5 text-sm hover:border-sky-600 hover:bg-cream disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={deleteLeague}
+                      disabled={deleting}
+                      className="rounded-md bg-red-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-50"
+                    >
+                      {deleting ? "Deleting…" : "Yes, delete it"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmingDelete(true)}
+                  className="rounded-md border border-red-400 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-200"
+                >
+                  Delete league
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}

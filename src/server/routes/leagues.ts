@@ -342,6 +342,56 @@ leagueRoutes.delete("/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+/**
+ * A member leaves their own league. Only allowed pre-draft — once picks exist, a roster
+ * with no owner is a bigger mess than just not allowing this. If the commissioner leaves
+ * and others remain, ownership passes to whoever joined earliest after them; if they're
+ * the only member, they're pointed at delete instead (an empty, ownerless league helps
+ * no one).
+ */
+leagueRoutes.post("/:id/leave", async (c) => {
+  const leagueId = c.req.param("id");
+  const user = c.get("user");
+
+  const league = await c.env.DB.prepare("SELECT commissioner_id, status FROM leagues WHERE id = ?")
+    .bind(leagueId)
+    .first<{ commissioner_id: string; status: string }>();
+  if (!league) return c.json({ error: "League not found" }, 404);
+  if (!(await loadMembership(c.env.DB, leagueId, user.id))) {
+    return c.json({ error: "You're not in this league" }, 403);
+  }
+  if (league.status !== "setup") {
+    return c.json({ error: "Can't leave a league once the draft has started" }, 409);
+  }
+
+  if (league.commissioner_id !== user.id) {
+    await c.env.DB.prepare("DELETE FROM league_members WHERE league_id = ? AND user_id = ?")
+      .bind(leagueId, user.id)
+      .run();
+    return c.json({ ok: true });
+  }
+
+  const successor = await c.env.DB.prepare(
+    "SELECT user_id FROM league_members WHERE league_id = ? AND user_id != ? ORDER BY joined_at ASC LIMIT 1",
+  )
+    .bind(leagueId, user.id)
+    .first<{ user_id: string }>();
+
+  if (!successor) {
+    return c.json(
+      { error: "You're the only member — delete the league instead if you want to remove it" },
+      400,
+    );
+  }
+
+  await c.env.DB.batch([
+    c.env.DB.prepare("UPDATE leagues SET commissioner_id = ? WHERE id = ?").bind(successor.user_id, leagueId),
+    c.env.DB.prepare("DELETE FROM league_members WHERE league_id = ? AND user_id = ?").bind(leagueId, user.id),
+  ]);
+
+  return c.json({ ok: true, newCommissionerId: successor.user_id });
+});
+
 /** Draftable teams for a league, cheapest information the draft board needs. */
 leagueRoutes.get("/:id/pool", async (c) => {
   const leagueId = c.req.param("id");
