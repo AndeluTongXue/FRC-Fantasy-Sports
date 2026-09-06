@@ -158,6 +158,7 @@ export class DraftRoom extends DurableObject<Env> {
       picks: [],
       rosterSize: league.roster_size,
       salaryCap: league.salary_cap,
+      cheapestAvailable: await this.cheapestAvailable(league),
     };
   }
 
@@ -266,6 +267,7 @@ export class DraftRoom extends DurableObject<Env> {
       picks: [],
       rosterSize: league.roster_size,
       salaryCap: league.salary_cap,
+      cheapestAvailable: await this.cheapestAvailable(league),
     };
 
     await this.env.DB.batch([
@@ -342,6 +344,10 @@ export class DraftRoom extends DurableObject<Env> {
       this.state.deadline = Date.now() + league.pick_seconds * 1000;
       await this.ctx.storage.setAlarm(this.state.deadline);
     }
+
+    // The pool may have shrunk (a pick was made) — keep the reserve-guard floor current
+    // so clients can accurately predict which picks would be rejected.
+    this.state.cheapestAvailable = await this.cheapestAvailable(league);
 
     await this.persist();
     this.broadcast();

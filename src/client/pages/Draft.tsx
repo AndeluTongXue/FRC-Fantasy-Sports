@@ -16,7 +16,7 @@ interface PoolTeam {
 export function Draft() {
   const { leagueId = "" } = useParams();
   const { user } = useAuth();
-  const { state, error, connected, start, pick, dismissError } = useDraft(leagueId);
+  const { state, error, connected, start, pick, dismissError } = useDraft(leagueId, user?.id ?? null);
   const [detail, setDetail] = useState<LeagueDetail | null>(null);
   const [pool, setPool] = useState<PoolTeam[]>([]);
   const [search, setSearch] = useState("");
@@ -45,6 +45,15 @@ export function Draft() {
   const myBudget = state.budgets[user?.id ?? ""] ?? 0;
   const isCommissioner = detail.league.commissionerId === user?.id;
   const round = Math.floor(state.currentPick / Math.max(state.order.length, 1)) + 1;
+
+  // Mirrors the server's reserve-budget guard exactly: a pick is only legal if enough
+  // budget is left afterward to still afford the cheapest remaining team for every other
+  // slot. Using the same `cheapestAvailable` floor the server broadcasts keeps this in
+  // sync without duplicating its SQL.
+  const mySlotsRemaining = state.rosterSize - state.picks.filter((entry) => entry.userId === user?.id).length;
+  const maxSpend = myBudget - Math.max(mySlotsRemaining - 1, 0) * state.cheapestAvailable;
+  const stuckNoLegalPick =
+    myTurn && state.status === "active" && mySlotsRemaining > 0 && maxSpend < state.cheapestAvailable;
 
   return (
     <div>
@@ -110,6 +119,12 @@ export function Draft() {
               </p>
             </div>
           </div>
+          {stuckNoLegalPick && (
+            <p className="mt-3 text-sm text-amber-700">
+              You can't afford any remaining team without leaving yourself unable to fill your other roster
+              spots — this pick will be skipped when the clock runs out.
+            </p>
+          )}
         </div>
       )}
 
@@ -138,7 +153,7 @@ export function Draft() {
             <table className="w-full text-sm">
               <tbody>
                 {pool.map((team) => {
-                  const affordable = team.price <= myBudget;
+                  const affordable = team.price <= maxSpend;
                   return (
                     <tr key={team.teamKey} className="border-b border-edge last:border-0">
                       <td className="px-3 py-2 font-mono font-semibold text-sky-600">{team.teamNumber}</td>

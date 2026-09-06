@@ -128,6 +128,9 @@ export interface DraftState {
   picks: DraftPick[];
   rosterSize: number;
   salaryCap: number;
+  /** Cheapest price among undrafted pool teams right now — the same "floor" the server
+   * uses for its reserve-budget guard, so clients can predict a pick's legality exactly. */
+  cheapestAvailable: number;
 }
 
 export type DraftClientMessage = { type: "start" } | { type: "pick"; teamKey: string };
