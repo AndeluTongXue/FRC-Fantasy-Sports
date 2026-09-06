@@ -15,6 +15,7 @@ export interface LeagueDetail {
     salaryCap: number;
     maxMembers: number;
     status: string;
+    scheduledDraftAt: number | null;
   };
   members: {
     userId: string;
@@ -32,6 +33,13 @@ export interface LeagueDetail {
     price: number;
   }[];
   bannedUsers: { userId: string; displayName: string; bannedAt: number }[];
+}
+
+/** Formats an epoch-ms timestamp as the local-time value a `datetime-local` input expects. */
+function toDatetimeLocalValue(epochMs: number): string {
+  const date = new Date(epochMs);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 export function League() {
@@ -55,6 +63,10 @@ export function League() {
   const [capInput, setCapInput] = useState("");
   const [savingCap, setSavingCap] = useState(false);
   const [capError, setCapError] = useState("");
+  const [editingSchedule, setEditingSchedule] = useState(false);
+  const [scheduleInput, setScheduleInput] = useState("");
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [scheduleError, setScheduleError] = useState("");
   const [editingRosterName, setEditingRosterName] = useState(false);
   const [rosterNameInput, setRosterNameInput] = useState("");
   const [savingRosterName, setSavingRosterName] = useState(false);
@@ -82,6 +94,7 @@ export function League() {
     picks.filter((pick) => pick.userId === userId).reduce((total, pick) => total + pick.price, 0);
   const isCommissioner = league.commissionerId === user?.id;
   const canEditCap = isCommissioner && league.status === "setup";
+  const canScheduleDraft = isCommissioner && league.status === "setup";
   const canBan = isCommissioner && league.status === "setup";
   const canLeave = league.status === "setup";
   // members is already sorted by joinedAt ascending; the next-oldest other member is who'd
@@ -128,6 +141,53 @@ export function League() {
       setCapError(caught instanceof Error ? caught.message : "Could not update budget");
     } finally {
       setSavingCap(false);
+    }
+  }
+
+  function startEditingSchedule() {
+    setScheduleInput(league.scheduledDraftAt ? toDatetimeLocalValue(league.scheduledDraftAt) : "");
+    setScheduleError("");
+    setEditingSchedule(true);
+  }
+
+  async function saveSchedule() {
+    if (!scheduleInput) {
+      setScheduleError("Pick a date and time");
+      return;
+    }
+    const scheduledDraftAt = new Date(scheduleInput).getTime();
+    if (!Number.isFinite(scheduledDraftAt) || scheduledDraftAt <= Date.now()) {
+      setScheduleError("Pick a date and time in the future");
+      return;
+    }
+    setSavingSchedule(true);
+    setScheduleError("");
+    try {
+      const updated = await api.patch<{ league: LeagueDetail["league"] }>(`/leagues/${league.id}`, {
+        scheduledDraftAt,
+      });
+      setDetail((prev) => prev && { ...prev, league: updated.league });
+      setEditingSchedule(false);
+    } catch (caught) {
+      setScheduleError(caught instanceof Error ? caught.message : "Could not schedule the draft");
+    } finally {
+      setSavingSchedule(false);
+    }
+  }
+
+  async function cancelSchedule() {
+    setSavingSchedule(true);
+    setScheduleError("");
+    try {
+      const updated = await api.patch<{ league: LeagueDetail["league"] }>(`/leagues/${league.id}`, {
+        scheduledDraftAt: null,
+      });
+      setDetail((prev) => prev && { ...prev, league: updated.league });
+      setEditingSchedule(false);
+    } catch (caught) {
+      setScheduleError(caught instanceof Error ? caught.message : "Could not cancel the schedule");
+    } finally {
+      setSavingSchedule(false);
     }
   }
 
@@ -298,6 +358,64 @@ export function League() {
             )}
           </p>
           {capError && <p className="mt-1 text-xs text-red-600">{capError}</p>}
+
+          {editingSchedule ? (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-sm">
+              <input
+                type="datetime-local"
+                value={scheduleInput}
+                onChange={(event) => setScheduleInput(event.target.value)}
+                className="rounded border border-edge bg-surface-raised px-1.5 py-0.5 text-sm outline-none focus:border-sky-500"
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={saveSchedule}
+                disabled={savingSchedule}
+                className="rounded bg-sky-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+              >
+                {savingSchedule ? "Saving…" : "Save"}
+              </button>
+              {league.scheduledDraftAt && (
+                <button
+                  type="button"
+                  onClick={cancelSchedule}
+                  disabled={savingSchedule}
+                  className="rounded border border-red-400 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                >
+                  Cancel schedule
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setEditingSchedule(false)}
+                disabled={savingSchedule}
+                className="text-xs text-slate-500 hover:text-slate-700"
+              >
+                Close
+              </button>
+              {scheduleError && <p className="w-full text-xs text-red-600">{scheduleError}</p>}
+            </div>
+          ) : (
+            (league.scheduledDraftAt || canScheduleDraft) && (
+              <p className="mt-1 text-sm text-slate-600">
+                {league.scheduledDraftAt ? (
+                  <>Draft scheduled for {new Date(league.scheduledDraftAt).toLocaleString()}</>
+                ) : (
+                  "No draft time scheduled yet"
+                )}
+                {canScheduleDraft && (
+                  <button
+                    type="button"
+                    onClick={startEditingSchedule}
+                    className="ml-1.5 text-xs text-sky-600 hover:underline"
+                  >
+                    {league.scheduledDraftAt ? "Reschedule" : "Schedule draft"}
+                  </button>
+                )}
+              </p>
+            )
+          )}
         </div>
         <div className="rounded-md border border-edge bg-surface px-3 py-2 text-sm">
           Invite code <span className="ml-1 font-mono text-sky-600">{league.inviteCode}</span>

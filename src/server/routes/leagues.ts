@@ -38,6 +38,7 @@ interface LeagueRow {
   scoring_config: string;
   status: string;
   created_at: number;
+  scheduled_draft_at: number | null;
 }
 
 function toLeague(row: LeagueRow) {
@@ -56,7 +57,17 @@ function toLeague(row: LeagueRow) {
     scoringConfig: JSON.parse(row.scoring_config),
     status: row.status,
     createdAt: row.created_at,
+    scheduledDraftAt: row.scheduled_draft_at,
   };
+}
+
+/** A commissioner-set draft time must be a real, future timestamp — anything else means
+ * either bad client input or a schedule that's already meaningless. */
+function parseScheduledDraftAt(value: unknown): number | null | "invalid" {
+  if (value === null) return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= Date.now()) return "invalid";
+  return parsed;
 }
 
 async function loadMembership(db: D1Database, leagueId: string, userId: string) {
@@ -80,6 +91,12 @@ leagueRoutes.post("/", async (c) => {
   if (name.length < 3) return c.json({ error: "League name must be at least 3 characters" }, 400);
   if (leagueType === "single_event" && !eventKey) {
     return c.json({ error: "Pick an event for a single-event league" }, 400);
+  }
+
+  const scheduledDraftAt =
+    body.scheduledDraftAt === undefined ? null : parseScheduledDraftAt(body.scheduledDraftAt);
+  if (scheduledDraftAt === "invalid") {
+    return c.json({ error: "Draft schedule must be a date and time in the future" }, 400);
   }
 
   if (eventKey) {
@@ -112,13 +129,15 @@ leagueRoutes.post("/", async (c) => {
     scoring_config: JSON.stringify(DEFAULT_SCORING),
     status: "setup",
     created_at: Date.now(),
+    scheduled_draft_at: scheduledDraftAt,
   };
 
   await c.env.DB.batch([
     c.env.DB.prepare(
       `INSERT INTO leagues (id, name, league_type, event_key, season_year, invite_code, commissioner_id,
-                            roster_size, salary_cap, max_members, pick_seconds, scoring_config, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                            roster_size, salary_cap, max_members, pick_seconds, scoring_config, status, created_at,
+                            scheduled_draft_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       league.id,
       league.name,
@@ -134,6 +153,7 @@ leagueRoutes.post("/", async (c) => {
       league.scoring_config,
       league.status,
       league.created_at,
+      league.scheduled_draft_at,
     ),
     c.env.DB.prepare(
       "INSERT INTO league_members (league_id, user_id, roster_name, joined_at) VALUES (?, ?, ?, ?)",
@@ -302,12 +322,14 @@ leagueRoutes.get("/:id", async (c) => {
   });
 });
 
-/** Only the salary cap is editable, and only before the draft starts — once picks exist,
- * changing the cap would retroactively make some already-drafted picks illegal. */
+/** The salary cap and the scheduled draft time are editable, and only before the draft
+ * starts — once picks exist, changing the cap would retroactively make some already-drafted
+ * picks illegal, and a schedule stops meaning anything once the draft is already underway.
+ * Pass scheduledDraftAt: null to cancel an existing schedule. */
 leagueRoutes.patch("/:id", async (c) => {
   const leagueId = c.req.param("id");
   const user = c.get("user");
-  const body = await c.req.json<{ salaryCap?: unknown }>();
+  const body = await c.req.json<{ salaryCap?: unknown; scheduledDraftAt?: unknown }>();
 
   const league = await c.env.DB.prepare("SELECT * FROM leagues WHERE id = ?")
     .bind(leagueId)
@@ -317,18 +339,39 @@ leagueRoutes.patch("/:id", async (c) => {
     return c.json({ error: "Only the commissioner can edit this league" }, 403);
   }
   if (league.status !== "setup") {
-    return c.json({ error: "The budget can't change once the draft has started" }, 409);
+    return c.json({ error: "League settings can't change once the draft has started" }, 409);
   }
 
-  if (body.salaryCap === undefined) return c.json({ league: toLeague(league) });
+  const next: LeagueRow = { ...league };
+  const setClauses: string[] = [];
+  const bindings: unknown[] = [];
 
-  const salaryCap = Number(body.salaryCap);
-  if (!Number.isFinite(salaryCap) || !Number.isInteger(salaryCap) || salaryCap < 50 || salaryCap > 500) {
-    return c.json({ error: "Salary cap must be a whole number between $50 and $500" }, 400);
+  if (body.salaryCap !== undefined) {
+    const salaryCap = Number(body.salaryCap);
+    if (!Number.isFinite(salaryCap) || !Number.isInteger(salaryCap) || salaryCap < 50 || salaryCap > 500) {
+      return c.json({ error: "Salary cap must be a whole number between $50 and $500" }, 400);
+    }
+    next.salary_cap = salaryCap;
+    setClauses.push("salary_cap = ?");
+    bindings.push(salaryCap);
   }
 
-  await c.env.DB.prepare("UPDATE leagues SET salary_cap = ? WHERE id = ?").bind(salaryCap, leagueId).run();
-  return c.json({ league: toLeague({ ...league, salary_cap: salaryCap }) });
+  if (body.scheduledDraftAt !== undefined) {
+    const scheduledDraftAt = parseScheduledDraftAt(body.scheduledDraftAt);
+    if (scheduledDraftAt === "invalid") {
+      return c.json({ error: "Draft schedule must be a date and time in the future" }, 400);
+    }
+    next.scheduled_draft_at = scheduledDraftAt;
+    setClauses.push("scheduled_draft_at = ?");
+    bindings.push(scheduledDraftAt);
+  }
+
+  if (setClauses.length === 0) return c.json({ league: toLeague(league) });
+
+  await c.env.DB.prepare(`UPDATE leagues SET ${setClauses.join(", ")} WHERE id = ?`)
+    .bind(...bindings, leagueId)
+    .run();
+  return c.json({ league: toLeague(next) });
 });
 
 /** A member renames their own team. Purely cosmetic, so unlike the salary cap this is

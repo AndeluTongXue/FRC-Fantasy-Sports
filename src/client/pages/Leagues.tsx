@@ -21,6 +21,7 @@ interface LeagueSummary {
   rosterSize: number;
   salaryCap: number;
   memberCount: number;
+  scheduledDraftAt: number | null;
 }
 
 const statusLabels: Record<string, string> = {
@@ -43,6 +44,7 @@ export function Leagues() {
   const [rosterSize, setRosterSize] = useState(6);
   const [maxMembers, setMaxMembers] = useState(8);
   const [salaryCap, setSalaryCap] = useState(200);
+  const [scheduledDraftAt, setScheduledDraftAt] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [minimumCap, setMinimumCap] = useState<MinimumCap | null>(null);
 
@@ -93,9 +95,11 @@ export function Leagues() {
         rosterSize,
         maxMembers,
         salaryCap,
+        scheduledDraftAt: scheduledDraftAt ? new Date(scheduledDraftAt).getTime() : null,
       });
       setMode("none");
       setName("");
+      setScheduledDraftAt("");
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not create league");
@@ -252,6 +256,19 @@ export function Leagues() {
                 </span>
               )}
             </label>
+
+            <label className="block">
+              <span className="mb-1 block text-sm text-slate-700">Draft time (optional)</span>
+              <input
+                type="datetime-local"
+                value={scheduledDraftAt}
+                onChange={(event) => setScheduledDraftAt(event.target.value)}
+                className="w-full rounded-md border border-edge bg-surface-raised px-3 py-2 outline-none focus:border-sky-500"
+              />
+              <span className="mt-1 block text-xs text-slate-500">
+                Just a shared plan — you can change or cancel it any time before the draft starts.
+              </span>
+            </label>
           </div>
 
           <button type="submit" className="rounded-md bg-sky-600 px-4 py-2 text-sm font-medium hover:bg-sky-700">
@@ -289,6 +306,11 @@ export function Leagues() {
                 {league.rosterSize} teams · ${league.salaryCap} cap · code{" "}
                 <span className="font-mono text-slate-600">{league.inviteCode}</span>
               </p>
+              {league.scheduledDraftAt && (
+                <p className="mt-1 text-xs text-slate-500">
+                  Draft {new Date(league.scheduledDraftAt).toLocaleString()}
+                </p>
+              )}
             </Link>
           ))}
         </div>

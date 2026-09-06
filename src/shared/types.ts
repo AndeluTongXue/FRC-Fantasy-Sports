@@ -53,6 +53,8 @@ export interface League {
   scoringConfig: ScoringConfig;
   status: LeagueStatus;
   createdAt: number;
+  /** Epoch ms the commissioner has penciled in for the draft, or null if unscheduled. */
+  scheduledDraftAt: number | null;
 }
 
 export interface LeagueMember {
