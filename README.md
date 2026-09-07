@@ -29,6 +29,19 @@ rare case nothing qualifies (the cheap tier got bought up before your turn), the
 skipped and that roster slot goes unfilled; the draft room shows a warning when this is
 about to happen to you.
 
+**Draft queue** — each manager keeps a private ordered list of teams to take if their clock
+expires. Autopick walks it and takes the first entry that's still undrafted, still in the
+pool, and affordable within the reserve guard, skipping the rest — a queue written before
+the draft can't know what the budget will look like by the time the clock runs out, so
+stopping at the first unaffordable entry would strand people who queued expensive teams
+first. Only when the queue yields nothing does it fall back to the old behaviour of taking
+the best affordable team, which is a guess at what the manager wanted rather than a
+statement of it. Drafting a team drops it from every queue in the league.
+
+Queues are private: the route only ever reads back the signed-in manager's own, since seeing
+an opponent's would be a large unearned advantage. They're editable from the draft room
+before and during the draft, and go read-only once it finishes.
+
 The commissioner can schedule an auto-start time for the draft — at creation, or any time
 before it actually starts, from the league page. It's backed by the same Durable Object
 alarm the pick clock uses, so it fires precisely rather than on the 10-minute cron tick;
@@ -266,7 +279,11 @@ node scripts/hardening-smoke.mjs    # admin-only sync routes, failed-sign-in loc
 node scripts/schedule-draft-smoke.mjs # scheduling at creation/after, edit/cancel, permissions, real auto-start
 node scripts/auth-email-smoke.mjs    # confirmation gating, single-use links, reset + session invalidation, no address enumeration
 node scripts/google-oauth-smoke.mjs  # PKCE/state on the way out, every callback refusal on the way back
+node scripts/draft-queue-smoke.mjs   # queue privacy/validation, and an expired clock drafting from the queue
 ```
+
+`draft-queue-smoke.mjs` takes about 45 seconds: `pick_seconds` is clamped to a 30s minimum,
+so it really does sit through a clock expiry rather than simulating one.
 
 `google-oauth-smoke.mjs` covers both configurations: with no OAuth client it checks the
 routes are absent, and with one (dummy values are enough) it checks the redirect and the

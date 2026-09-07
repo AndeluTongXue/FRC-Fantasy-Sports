@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { DraftQueue } from "../components/DraftQueue";
+import type { QueueTeam } from "../components/DraftQueue";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useCountdown, useDraft } from "../lib/useDraft";
@@ -8,13 +10,8 @@ import { pickOwner } from "../../shared/types";
 import type { DraftState } from "../../shared/types";
 import type { LeagueDetail } from "./League";
 
-interface PoolTeam {
-  teamKey: string;
-  teamNumber: number;
-  nickname: string | null;
-  price: number;
-  epa: number | null;
-}
+/** Same shape the queue returns, so a pool row can go straight onto the queue. */
+type PoolTeam = QueueTeam;
 
 /** Exactly how many of the OTHER managers' picks will land between now and this manager's
  * own final remaining pick, given the fixed snake order — mirrors DraftRoom's
@@ -41,6 +38,8 @@ export function Draft() {
   const { state, error, connected, start, pick, dismissError } = useDraft(leagueId, user?.id ?? null);
   const [detail, setDetail] = useState<LeagueDetail | null>(null);
   const [pool, setPool] = useState<PoolTeam[]>([]);
+  const [queue, setQueue] = useState<QueueTeam[]>([]);
+  const [queueError, setQueueError] = useState("");
   const [search, setSearch] = useState("");
   const remaining = useCountdown(state?.deadline ?? null);
   const scheduledRemaining = useCountdown(state?.scheduledDraftAt ?? null);
@@ -59,6 +58,30 @@ export function Draft() {
     }, 150);
     return () => clearTimeout(timer);
   }, [leagueId, search, picksMade]);
+
+  // Reloaded on every pick, not just on mount: drafting a team drops it from every queue in
+  // the league, so someone else's pick can shorten this one.
+  useEffect(() => {
+    api
+      .get<{ teams: QueueTeam[] }>(`/leagues/${leagueId}/queue`)
+      .then((data) => setQueue(data.teams))
+      .catch(() => setQueue([]));
+  }, [leagueId, picksMade]);
+
+  /** Optimistic: the reorder buttons should feel instant, and the server's answer is
+   * authoritative if it disagrees (it filters out anything drafted in the meantime). */
+  function saveQueue(next: QueueTeam[]) {
+    const previous = queue;
+    setQueue(next);
+    setQueueError("");
+    api
+      .put<{ teams: QueueTeam[] }>(`/leagues/${leagueId}/queue`, { teamKeys: next.map((team) => team.teamKey) })
+      .then((data) => setQueue(data.teams))
+      .catch((caught: unknown) => {
+        setQueue(previous);
+        setQueueError(caught instanceof Error ? caught.message : "Could not save your queue");
+      });
+  }
 
   if (!detail || !state) return <p className="text-sm text-slate-600">Connecting to draft room…</p>;
 
@@ -86,6 +109,7 @@ export function Draft() {
     .reduce((sum, price) => sum + price, 0);
   const maxSpend = myBudget - reserve;
   const cheapestAvailable = cheapestPrices[0] ?? Infinity;
+  const queueLocked = state.status === "complete";
   const stuckNoLegalPick =
     myTurn && state.status === "active" && mySlotsRemaining > 0 && maxSpend < cheapestAvailable;
 
@@ -194,6 +218,7 @@ export function Draft() {
               <tbody>
                 {pool.map((team) => {
                   const affordable = team.price <= maxSpend;
+                  const queuedAt = queue.findIndex((entry) => entry.teamKey === team.teamKey);
                   return (
                     <tr key={team.teamKey} className="border-b border-edge last:border-0">
                       <td className="px-3 py-2 font-mono font-semibold text-sky-600">{team.teamNumber}</td>
@@ -203,14 +228,36 @@ export function Draft() {
                       </td>
                       <td className="px-3 py-2 text-right font-mono">${team.price}</td>
                       <td className="px-3 py-2 text-right">
-                        <button
-                          type="button"
-                          disabled={!myTurn || state.status !== "active" || !affordable}
-                          onClick={() => pick(team.teamKey)}
-                          className="rounded bg-sky-600 px-3 py-1 text-xs font-medium text-white hover:bg-sky-700 disabled:bg-surface-raised disabled:text-slate-400"
-                        >
-                          Draft
-                        </button>
+                        <div className="flex items-center justify-end gap-1">
+                          {!queueLocked &&
+                            (queuedAt >= 0 ? (
+                              <button
+                                type="button"
+                                title="Remove from your queue"
+                                onClick={() => saveQueue(queue.filter((entry) => entry.teamKey !== team.teamKey))}
+                                className="rounded bg-sky-100 px-2 py-1 font-mono text-xs font-medium text-sky-700 hover:bg-sky-200"
+                              >
+                                #{queuedAt + 1}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                title="Add to your queue"
+                                onClick={() => saveQueue([...queue, team])}
+                                className="rounded border border-edge px-2 py-1 text-xs text-slate-600 hover:bg-surface-raised"
+                              >
+                                + Queue
+                              </button>
+                            ))}
+                          <button
+                            type="button"
+                            disabled={!myTurn || state.status !== "active" || !affordable}
+                            onClick={() => pick(team.teamKey)}
+                            className="rounded bg-sky-600 px-3 py-1 text-xs font-medium text-white hover:bg-sky-700 disabled:bg-surface-raised disabled:text-slate-400"
+                          >
+                            Draft
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -221,6 +268,16 @@ export function Draft() {
         </div>
 
         <div>
+          {queueError && <p className="mb-3 text-sm text-red-600">{queueError}</p>}
+
+          <DraftQueue
+            teams={queue}
+            maxSpend={maxSpend}
+            locked={queueLocked}
+            onReorder={saveQueue}
+            onRemove={(teamKey) => saveQueue(queue.filter((entry) => entry.teamKey !== teamKey))}
+          />
+
           <h2 className="mb-3 font-medium">Owners</h2>
           <div className="space-y-3">
             {(state.order.length ? state.order : detail.members.map((member) => member.userId)).map(

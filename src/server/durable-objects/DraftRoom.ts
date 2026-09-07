@@ -107,7 +107,11 @@ export class DraftRoom extends DurableObject<Env> {
     const slotsAfterPick = this.slotsRemaining(onClock) - 1;
     const maxSpend = budget - (await this.reserveCost(league, onClock, slotsAfterPick));
 
-    const best = await this.bestAvailable(league, maxSpend);
+    // The manager's own queue comes first; `bestAvailable` is the fallback for anyone who
+    // never set one, and picking the highest-EPA affordable team is a guess at what they
+    // wanted rather than a statement of it.
+    const queued = await this.queuedPick(league, onClock, maxSpend);
+    const best = queued ?? (await this.bestAvailable(league, maxSpend));
     if (best) await this.applyPick(league, onClock, best.teamKey, best.price);
     else await this.advance(league);
   }
@@ -312,6 +316,44 @@ export class DraftRoom extends DurableObject<Env> {
     return prices.slice(otherCapacity).reduce((sum, price) => sum + price, 0);
   }
 
+  /**
+   * The first team on this manager's queue that is still undrafted, still in the pool, and
+   * affordable within the reserve guard. Skipping unaffordable entries rather than stopping
+   * at them matters: a queue written before the draft can't know what the budget will look
+   * like by the time the clock expires.
+   */
+  private async queuedPick(
+    league: LeagueConfig,
+    userId: string,
+    maxSpend: number,
+  ): Promise<{ teamKey: string; price: number } | null> {
+    const pool = this.poolFilter(league);
+    const taken = this.takenPlaceholders();
+    const pricingYear = await pricingYearForLeague(this.env.DB, league);
+    const row = await this.env.DB.prepare(
+      `SELECT q.team_key, COALESCE(p.price, ?) AS price
+       FROM draft_queues q
+       JOIN teams t ON t.team_key = q.team_key
+       LEFT JOIN team_prices p ON p.team_key = q.team_key AND p.season_year = ?
+       WHERE q.league_id = ? AND q.user_id = ?
+         AND ${pool.clause} AND ${taken.clause} AND COALESCE(p.price, ?) <= ?
+       ORDER BY q.position ASC
+       LIMIT 1`,
+    )
+      .bind(
+        DEFAULT_TEAM_PRICE,
+        pricingYear,
+        league.id,
+        userId,
+        ...pool.bindings,
+        ...taken.bindings,
+        DEFAULT_TEAM_PRICE,
+        maxSpend,
+      )
+      .first<{ team_key: string; price: number }>();
+    return row ? { teamKey: row.team_key, price: row.price } : null;
+  }
+
   private async bestAvailable(
     league: LeagueConfig,
     maxSpend: number,
@@ -442,6 +484,12 @@ export class DraftRoom extends DurableObject<Env> {
        VALUES (?, ?, ?, ?, ?, ?)`,
     )
       .bind(league.id, pick.pickNumber, userId, teamKey, price, pick.draftedAt)
+      .run();
+
+    // Nobody's queue should keep a team they can no longer have — including the drafter's,
+    // who may well have taken it off their own list by hand.
+    await this.env.DB.prepare("DELETE FROM draft_queues WHERE league_id = ? AND team_key = ?")
+      .bind(league.id, teamKey)
       .run();
 
     await this.advance(league);

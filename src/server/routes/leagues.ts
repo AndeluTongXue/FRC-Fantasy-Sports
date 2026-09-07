@@ -908,3 +908,135 @@ leagueRoutes.get("/:id/draft/ws", async (c) => {
   const stub = c.env.DRAFT_ROOM.get(c.env.DRAFT_ROOM.idFromName(leagueId));
   return stub.fetch(new Request(c.req.url, { method: "GET", headers }));
 });
+
+/**
+ * A manager's own draft queue: the teams to take, in order, when their pick clock expires.
+ *
+ * Always scoped to the signed-in user — a queue is private, and reading an opponent's would
+ * be a large unearned advantage. Drafted teams are filtered out rather than returned with a
+ * flag, so a queue read back is always a list of teams the manager can still actually get.
+ */
+async function readQueue(db: D1Database, league: LeagueRow, userId: string) {
+  const pricingYear = await pricingYearForLeague(db, league);
+  const bindings: unknown[] = [DEFAULT_TEAM_PRICE, pricingYear, league.id, userId, league.id];
+
+  let poolClause = "1 = 1";
+  if (league.league_type === "single_event" && league.event_key) {
+    poolClause = "t.team_key IN (SELECT team_key FROM event_teams WHERE event_key = ?)";
+    bindings.push(league.event_key);
+  }
+
+  const { results } = await db
+    .prepare(
+      `SELECT t.team_key, t.team_number, t.nickname, COALESCE(p.price, ?) AS price, p.epa
+       FROM draft_queues q
+       JOIN teams t ON t.team_key = q.team_key
+       LEFT JOIN team_prices p ON p.team_key = q.team_key AND p.season_year = ?
+       WHERE q.league_id = ? AND q.user_id = ?
+         AND t.team_key NOT IN (SELECT team_key FROM draft_picks WHERE league_id = ?)
+         AND ${poolClause}
+       ORDER BY q.position ASC`,
+    )
+    .bind(...bindings)
+    .all<{
+      team_key: string;
+      team_number: number;
+      nickname: string | null;
+      price: number;
+      epa: number | null;
+    }>();
+
+  return results.map((row) => ({
+    teamKey: row.team_key,
+    teamNumber: row.team_number,
+    nickname: row.nickname,
+    price: row.price,
+    epa: row.epa,
+  }));
+}
+
+leagueRoutes.get("/:id/queue", async (c) => {
+  const leagueId = c.req.param("id");
+  const user = c.get("user");
+
+  const league = await c.env.DB.prepare("SELECT * FROM leagues WHERE id = ?")
+    .bind(leagueId)
+    .first<LeagueRow>();
+  if (!league) return c.json({ error: "League not found" }, 404);
+  if (!(await loadMembership(c.env.DB, leagueId, user.id))) {
+    return c.json({ error: "You're not in this league" }, 403);
+  }
+
+  return c.json({ teams: await readQueue(c.env.DB, league, user.id) });
+});
+
+/** How deep a queue is worth keeping. Beyond a manager's own roster size it's already
+ * insurance against opponents taking their favourites; past this it's noise. */
+const MAX_QUEUE_LENGTH = 50;
+
+/**
+ * Replaces the whole queue in one shot rather than patching positions. Reordering is the
+ * common edit and doing it as a diff invites off-by-one bugs for no benefit — these lists
+ * are tens of rows.
+ *
+ * Unknown, out-of-pool, and already-drafted teams are dropped silently rather than failing
+ * the request: a team drafted by someone else a moment before the save shouldn't cost the
+ * manager the rest of their reordering.
+ */
+leagueRoutes.put("/:id/queue", async (c) => {
+  const leagueId = c.req.param("id");
+  const user = c.get("user");
+  const body = await c.req.json<{ teamKeys?: unknown }>().catch(() => ({}) as { teamKeys?: unknown });
+
+  const league = await c.env.DB.prepare("SELECT * FROM leagues WHERE id = ?")
+    .bind(leagueId)
+    .first<LeagueRow>();
+  if (!league) return c.json({ error: "League not found" }, 404);
+  if (!(await loadMembership(c.env.DB, leagueId, user.id))) {
+    return c.json({ error: "You're not in this league" }, 403);
+  }
+  if (league.status === "active" || league.status === "complete") {
+    return c.json({ error: "The draft is over — queues no longer do anything" }, 409);
+  }
+
+  if (!Array.isArray(body.teamKeys)) return c.json({ error: "teamKeys must be an array" }, 400);
+
+  const requested = [...new Set(body.teamKeys.filter((key): key is string => typeof key === "string"))].slice(
+    0,
+    MAX_QUEUE_LENGTH,
+  );
+
+  let valid: string[] = [];
+  if (requested.length > 0) {
+    const bindings: unknown[] = [leagueId, ...requested];
+    let poolClause = "1 = 1";
+    if (league.league_type === "single_event" && league.event_key) {
+      poolClause = "t.team_key IN (SELECT team_key FROM event_teams WHERE event_key = ?)";
+      bindings.push(league.event_key);
+    }
+
+    const { results } = await c.env.DB.prepare(
+      `SELECT t.team_key FROM teams t
+       WHERE t.team_key NOT IN (SELECT team_key FROM draft_picks WHERE league_id = ?)
+         AND t.team_key IN (${requested.map(() => "?").join(",")})
+         AND ${poolClause}`,
+    )
+      .bind(...bindings)
+      .all<{ team_key: string }>();
+
+    // Re-sorted into the caller's order: the SQL result order is not the queue order.
+    const allowed = new Set(results.map((row) => row.team_key));
+    valid = requested.filter((key) => allowed.has(key));
+  }
+
+  await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM draft_queues WHERE league_id = ? AND user_id = ?").bind(leagueId, user.id),
+    ...valid.map((teamKey, index) =>
+      c.env.DB.prepare(
+        "INSERT INTO draft_queues (league_id, user_id, position, team_key) VALUES (?, ?, ?, ?)",
+      ).bind(leagueId, user.id, index, teamKey),
+    ),
+  ]);
+
+  return c.json({ teams: await readQueue(c.env.DB, league, user.id) });
+});
