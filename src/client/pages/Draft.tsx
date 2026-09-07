@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { CopyButton } from "../components/CopyButton";
 import { DraftQueue } from "../components/DraftQueue";
@@ -43,6 +43,9 @@ export function Draft() {
   const [queue, setQueue] = useState<QueueTeam[]>([]);
   const [queueError, setQueueError] = useState("");
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<"epa" | "priceAsc" | "priceDesc" | "number">("epa");
+  const [affordableOnly, setAffordableOnly] = useState(false);
+  const [hideQueued, setHideQueued] = useState(false);
   const remaining = useCountdown(state?.deadline ?? null);
   const scheduledRemaining = useCountdown(state?.scheduledDraftAt ?? null);
 
@@ -51,15 +54,47 @@ export function Draft() {
   }, [leagueId]);
 
   const picksMade = state?.picks.length ?? 0;
+
+  /**
+   * Mirrors the server's reserve-budget guard: a pick is only legal if enough budget is left
+   * afterward to still afford the teams opponents will leave behind for each remaining slot.
+   * That's the price-ascending slice starting right after however many opponent picks land
+   * before this manager's roster is full — not `slots * cheapest`, which both overstates
+   * what's affordable (each team sells once) and ignores that opponents get chances to hoard
+   * cheap teams in between this manager's own turns.
+   *
+   * Computed up here rather than after the loading guard below, because the pool query sends
+   * it to the server as a price ceiling.
+   */
+  const budget = useMemo(() => {
+    if (!state || !user) return null;
+    // A room persisted before cheapestPrices existed can still push the old state shape.
+    const cheapestPrices = state.cheapestPrices ?? [];
+    const mine = state.budgets[user.id] ?? 0;
+    const slotsRemaining = state.rosterSize - state.picks.filter((entry) => entry.userId === user.id).length;
+    const slotsAfterPick = Math.max(slotsRemaining - 1, 0);
+    const otherCapacity = othersPicksBeforeMyLast(state, user.id, slotsAfterPick);
+    const reserve = cheapestPrices
+      .slice(otherCapacity, otherCapacity + slotsAfterPick)
+      .reduce((sum, price) => sum + price, 0);
+    return { slotsRemaining, reserve, maxSpend: mine - reserve, cheapestAvailable: cheapestPrices[0] ?? Infinity };
+  }, [state, user]);
+
+  const maxSpend = budget?.maxSpend ?? 0;
+
   useEffect(() => {
     const timer = setTimeout(() => {
+      const params = new URLSearchParams({ search, limit: "80", sort });
+      // Sent to the server rather than filtered client-side: a season pool is 3000+ teams,
+      // so filtering the 80 rows already fetched would answer "the cheapest of the best".
+      if (affordableOnly) params.set("maxPrice", String(maxSpend));
       api
-        .get<{ teams: PoolTeam[] }>(`/leagues/${leagueId}/pool?search=${encodeURIComponent(search)}&limit=80`)
+        .get<{ teams: PoolTeam[] }>(`/leagues/${leagueId}/pool?${params}`)
         .then((data) => setPool(data.teams))
         .catch(() => setPool([]));
     }, 150);
     return () => clearTimeout(timer);
-  }, [leagueId, search, picksMade]);
+  }, [leagueId, search, picksMade, sort, affordableOnly, maxSpend]);
 
   // Reloaded on every pick, not just on mount: drafting a team drops it from every queue in
   // the league, so someone else's pick can shorten this one.
@@ -94,24 +129,18 @@ export function Draft() {
   const isCommissioner = detail.league.commissionerId === user?.id;
   const round = Math.floor(state.currentPick / Math.max(state.order.length, 1)) + 1;
 
-  // A room persisted before cheapestPrices existed can still push the old state shape (the
-  // server heals it on connect, but never render-crash the whole page over a missing field).
-  const cheapestPrices = state.cheapestPrices ?? [];
-
   // Mirrors the server's reserve-budget guard exactly: a pick is only legal if enough
   // budget is left afterward to still afford the teams opponents will leave behind for each
   // remaining slot. That's the price-ascending slice starting right after however many
   // opponent picks land before this manager's own roster is full — not `slots * cheapest`,
   // which both overstates what's affordable (each team sells once) and ignores that
   // opponents get chances to hoard cheap teams in between this manager's own turns.
-  const mySlotsRemaining = state.rosterSize - state.picks.filter((entry) => entry.userId === user?.id).length;
-  const slotsAfterPick = Math.max(mySlotsRemaining - 1, 0);
-  const otherCapacity = user ? othersPicksBeforeMyLast(state, user.id, slotsAfterPick) : 0;
-  const reserve = cheapestPrices
-    .slice(otherCapacity, otherCapacity + slotsAfterPick)
-    .reduce((sum, price) => sum + price, 0);
-  const maxSpend = myBudget - reserve;
-  const cheapestAvailable = cheapestPrices[0] ?? Infinity;
+  const visiblePool = hideQueued
+    ? pool.filter((team) => !queue.some((entry) => entry.teamKey === team.teamKey))
+    : pool;
+  const mySlotsRemaining = budget?.slotsRemaining ?? 0;
+  const reserve = budget?.reserve ?? 0;
+  const cheapestAvailable = budget?.cheapestAvailable ?? Infinity;
   const queueLocked = state.status === "complete";
   const paused = state.pausedRemainingMs !== null;
   // The commissioner can run the on-clock manager's autopick early, but only for someone
@@ -285,10 +314,54 @@ export function Draft() {
             )}
           </div>
 
+          <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-slate-600">
+            <label className="flex items-center gap-1.5">
+              <span className="text-xs uppercase tracking-wide text-slate-500">Sort</span>
+              <select
+                value={sort}
+                onChange={(event) => setSort(event.target.value as typeof sort)}
+                className="rounded-md border border-edge bg-surface px-2 py-1 text-sm outline-none focus:border-sky-500"
+              >
+                <option value="epa">Best EPA</option>
+                <option value="priceAsc">Cheapest first</option>
+                <option value="priceDesc">Most expensive first</option>
+                <option value="number">Team number</option>
+              </select>
+            </label>
+
+            <label className="flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={affordableOnly}
+                onChange={(event) => setAffordableOnly(event.target.checked)}
+                className="accent-sky-600"
+              />
+              Only what I can afford{" "}
+              <span className="font-mono text-xs text-slate-500">(${maxSpend})</span>
+            </label>
+
+            <label className="flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={hideQueued}
+                onChange={(event) => setHideQueued(event.target.checked)}
+                className="accent-sky-600"
+              />
+              Hide queued
+            </label>
+          </div>
+
           <div className="max-h-[32rem] overflow-y-auto rounded-lg border border-edge">
+            {visiblePool.length === 0 && (
+              <p className="px-3 py-6 text-center text-sm text-slate-500">
+                {affordableOnly && maxSpend < cheapestAvailable
+                  ? `Nothing is within $${maxSpend} — you must hold back $${reserve} to fill your remaining roster spots.`
+                  : "No teams match those filters."}
+              </p>
+            )}
             <table className="w-full text-sm">
               <tbody>
-                {pool.map((team) => {
+                {visiblePool.map((team) => {
                   const queuedAt = queue.findIndex((entry) => entry.teamKey === team.teamKey);
                   return (
                     <tr key={team.teamKey} className="border-b border-edge last:border-0">

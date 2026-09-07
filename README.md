@@ -51,6 +51,15 @@ and nothing records who had queued it.
 Deliberately not included: skipping a manager's pick outright. It permanently costs them a
 roster slot, and drafting for them covers the same situation without the collateral damage.
 
+**Finding teams to draft** — the pool list sorts by EPA (default), price ascending or
+descending, or team number, and can be capped at what the manager can actually spend right
+now or trimmed of teams they've already queued. Sorting and the price ceiling are applied in
+SQL rather than to the page the client already holds: a season pool is 3000+ teams against a
+page of 80, so filtering client-side would answer "the cheapest of the highest-EPA 80"
+instead of "the cheapest". `sort` lands in the SQL string, so it's whitelisted, not
+interpolated. Hiding queued teams is the one client-side filter — it only ever removes rows
+the server already sent.
+
 **Draft queue** — each manager keeps a private ordered list of teams to take if their clock
 expires. Autopick walks it and takes the first entry that's still undrafted, still in the
 pool, and affordable within the reserve guard, skipping the rest — a queue written before
@@ -315,6 +324,7 @@ node scripts/hardening-smoke.mjs    # admin-only sync routes, failed-sign-in loc
 node scripts/schedule-draft-smoke.mjs # scheduling at creation/after, edit/cancel, permissions, real auto-start
 node scripts/auth-email-smoke.mjs    # confirmation gating, single-use links, reset + session invalidation, no address enumeration
 node scripts/google-oauth-smoke.mjs  # PKCE/state on the way out, every callback refusal on the way back
+node scripts/pool-smoke.mjs          # pool sorting, the price ceiling, and that both are applied in SQL
 node scripts/draft-queue-smoke.mjs   # queue privacy/validation, and an expired clock drafting from the queue
 node scripts/commissioner-controls-smoke.mjs # pause/resume/extend/autodraft/undo, and that a manager can invoke none of them
 ```
@@ -369,6 +379,6 @@ beyond TBA.
 
 ## Not built yet
 
-- Changing your own email address or display name (there's no account settings page yet)
+- Changing your own email address (the account page covers the display name)
 - Setting a password on an account created through Google (it can only sign in with Google)
 - Trades and waivers

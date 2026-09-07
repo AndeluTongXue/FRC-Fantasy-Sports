@@ -782,6 +782,12 @@ leagueRoutes.get("/:id/pool", async (c) => {
   const user = c.get("user");
   const search = c.req.query("search")?.trim() ?? "";
   const limit = Math.min(Number.parseInt(c.req.query("limit") ?? "60", 10) || 60, 200);
+  const sort = c.req.query("sort") ?? "epa";
+  // Sorting and the price ceiling have to be applied in SQL, not to the page the client
+  // already has: a season pool is 3000+ teams, so filtering 80 rows that were chosen by EPA
+  // would answer "the cheapest of the best" rather than "the cheapest".
+  const rawMaxPrice = c.req.query("maxPrice");
+  const maxPrice = rawMaxPrice === undefined ? null : Number(rawMaxPrice);
 
   const league = await c.env.DB.prepare("SELECT * FROM leagues WHERE id = ?")
     .bind(leagueId)
@@ -805,13 +811,29 @@ leagueRoutes.get("/:id/pool", async (c) => {
     bindings.push(`${search}%`, `%${search.toLowerCase()}%`);
   }
 
+  // A ceiling of 0 or less is meaningful — it's what a manager with no headroom left can
+  // afford — so this checks for null rather than falsiness.
+  let priceClause = "1 = 1";
+  if (maxPrice !== null && Number.isFinite(maxPrice)) {
+    priceClause = "COALESCE(p.price, ?) <= ?";
+    bindings.push(DEFAULT_TEAM_PRICE, maxPrice);
+  }
+
+  // Whitelisted rather than interpolated: this lands in the SQL string itself.
+  const orderBy =
+    {
+      priceAsc: "price ASC, COALESCE(p.epa, -1e9) DESC",
+      priceDesc: "price DESC, COALESCE(p.epa, -1e9) DESC",
+      number: "t.team_number ASC",
+    }[sort] ?? "COALESCE(p.epa, -1e9) DESC, t.team_number";
+
   const { results } = await c.env.DB.prepare(
     `SELECT t.team_key, t.team_number, t.nickname, COALESCE(p.price, ?) AS price, p.epa
      FROM teams t
      LEFT JOIN team_prices p ON p.team_key = t.team_key AND p.season_year = ?
      WHERE t.team_key NOT IN (SELECT team_key FROM draft_picks WHERE league_id = ?)
-       AND ${poolClause} AND ${searchClause}
-     ORDER BY COALESCE(p.epa, -1e9) DESC, t.team_number
+       AND ${poolClause} AND ${searchClause} AND ${priceClause}
+     ORDER BY ${orderBy}
      LIMIT ?`,
   )
     .bind(...bindings, limit)
