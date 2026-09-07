@@ -3,6 +3,8 @@
  * immediately in the draft room, invalid/off-limits attempts are rejected, and the
  * budget locks once the draft has started.
  *
+ * Also covers the pick clock, editable in the same window and under the same rules.
+ *
  * Usage: node scripts/edit-budget-smoke.mjs [baseUrl]
  */
 import WebSocket from "ws";
@@ -94,13 +96,51 @@ check(
   JSON.stringify(pendingState.state?.budgets),
 );
 
+console.log("");
+console.log("Pick clock validation:");
+const clockTooLow = await api(owner.cookie, `/api/leagues/${league.id}`, { method: "PATCH", body: JSON.stringify({ pickSeconds: 29 }) });
+check("rejects below the 30s floor", clockTooLow.status === 400, `${clockTooLow.status} ${clockTooLow.body.error}`);
+
+const clockTooHigh = await api(owner.cookie, `/api/leagues/${league.id}`, { method: "PATCH", body: JSON.stringify({ pickSeconds: 301 }) });
+check("rejects above the 300s ceiling", clockTooHigh.status === 400, `${clockTooHigh.status}`);
+
+const clockFractional = await api(owner.cookie, `/api/leagues/${league.id}`, { method: "PATCH", body: JSON.stringify({ pickSeconds: 45.5 }) });
+check("rejects a fractional value", clockFractional.status === 400, `${clockFractional.status}`);
+
+const clockAsRival = await api(rival.cookie, `/api/leagues/${league.id}`, { method: "PATCH", body: JSON.stringify({ pickSeconds: 60 }) });
+check("non-commissioner cannot edit the clock", clockAsRival.status === 403, `${clockAsRival.status}`);
+
+const stillOriginal = await api(owner.cookie, `/api/leagues/${league.id}`);
+check("none of that changed the stored value", stillOriginal.body.league.pickSeconds === 300, stillOriginal.body.league.pickSeconds);
+
+console.log("");
+console.log("Valid pick clock edit:");
+const clockEdited = await api(owner.cookie, `/api/leagues/${league.id}`, { method: "PATCH", body: JSON.stringify({ pickSeconds: 45 }) });
+check("commissioner can shorten the clock", clockEdited.status === 200 && clockEdited.body.league.pickSeconds === 45, `${clockEdited.body.league?.pickSeconds}`);
+check("and a clock-only edit leaves the cap alone", clockEdited.body.league.salaryCap === 250, `${clockEdited.body.league.salaryCap}`);
+
+const bothAtOnce = await api(owner.cookie, `/api/leagues/${league.id}`, { method: "PATCH", body: JSON.stringify({ salaryCap: 260, pickSeconds: 40 }) });
+check("both settings can change in one request", bothAtOnce.body.league.salaryCap === 260 && bothAtOnce.body.league.pickSeconds === 40, JSON.stringify({ cap: bothAtOnce.body.league.salaryCap, clock: bothAtOnce.body.league.pickSeconds }));
+
+const clockRefetched = await api(owner.cookie, `/api/leagues/${league.id}`);
+check("the new clock persists on refetch", clockRefetched.body.league.pickSeconds === 40, clockRefetched.body.league.pickSeconds);
+
 console.log("\nLocked once drafting starts:");
 ws.send(JSON.stringify({ type: "start" }));
-await new Promise((resolve) => ws.once("message", (raw) => resolve(JSON.parse(raw.toString()))));
+const started = await new Promise((resolve) => ws.once("message", (raw) => resolve(JSON.parse(raw.toString()))));
+const firstPickSeconds = Math.round((started.state.deadline - Date.now()) / 1000);
+check(
+  "the draft runs on the edited clock, not the one set at creation",
+  Math.abs(firstPickSeconds - 40) <= 3,
+  `${firstPickSeconds}s; created with 300s, edited to 40s`,
+);
 ws.close();
 
 const afterStart = await api(owner.cookie, `/api/leagues/${league.id}`, { method: "PATCH", body: JSON.stringify({ salaryCap: 300 }) });
-check("cannot edit after the draft has started", afterStart.status === 409, `${afterStart.status} ${afterStart.body.error}`);
+check("cannot edit the cap after the draft has started", afterStart.status === 409, `${afterStart.status} ${afterStart.body.error}`);
+
+const clockAfterStart = await api(owner.cookie, `/api/leagues/${league.id}`, { method: "PATCH", body: JSON.stringify({ pickSeconds: 90 }) });
+check("cannot edit the clock after the draft has started", clockAfterStart.status === 409, `${clockAfterStart.status}`);
 
 console.log(failures.length ? `\n${failures.length} FAILED: ${failures.join(", ")}` : "\nAll edit-budget checks passed.");
 process.exit(failures.length ? 1 : 0);

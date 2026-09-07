@@ -23,8 +23,10 @@ everything, and a Durable Object runs each live draft room.
 **Draft** — snake order, but every team carries a fixed price and each owner has a salary
 cap. You draft in turn and can take any team you can still afford, with a guard that stops
 you spending so much you can't fill your roster (the client mirrors this exactly, so a team
-that would trigger it shows as unavailable before you even click). Each pick has a clock; if
-it expires, the best affordable team within that same guard is auto-drafted — or, in the
+that would trigger it shows as unavailable before you even click). Each pick has a clock the commissioner sets at league creation and can change any time
+before the draft starts (30–300s, defaulting to 90 — the same window the salary cap is
+editable in, and locked for the same reason: once the draft begins the room's alarm is
+already running on it). If it expires, the best affordable team within that same guard is auto-drafted — or, in the
 rare case nothing qualifies (the cheap tier got bought up before your turn), the pick is
 skipped and that roster slot goes unfilled; the draft room shows a warning when this is
 about to happen to you.
@@ -296,7 +298,7 @@ out of the outbox ([`scripts/lib/confirm-email.mjs`](scripts/lib/confirm-email.m
 node scripts/draft-smoke.mjs         # turn order, budget guards, snake reversal, completion
 node scripts/season-smoke.mjs        # season-long scoring, including the best-2-regular-events cap
 node scripts/delete-league-smoke.mjs # commissioner-only delete, D1 cleanup, draft room teardown
-node scripts/edit-budget-smoke.mjs   # commissioner-only, pre-draft-only salary cap editing
+node scripts/edit-budget-smoke.mjs   # commissioner-only, pre-draft-only salary cap and pick clock editing
 node scripts/minimum-cap-smoke.mjs   # minimum-cap math + a live adversarial draft proving the guarantee holds
 node scripts/leave-league-smoke.mjs  # leaving pre-draft, commissioner transfer, solo-member block, post-draft lock
 node scripts/ban-league-smoke.mjs    # commissioner-only ban/unban, kick + rejoin block, self-ban refused, post-draft lock

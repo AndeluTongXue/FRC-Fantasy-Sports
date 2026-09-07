@@ -167,6 +167,12 @@ export type DraftClientMessage =
   | { type: "autopick" }
   | { type: "undo" };
 
+/** Bounds on a league's pick clock. The floor keeps a draft from being unplayable on a phone
+ * at an event; the ceiling keeps one manager from stalling the room for half an hour. */
+export const MIN_PICK_SECONDS = 30;
+export const MAX_PICK_SECONDS = 300;
+export const DEFAULT_PICK_SECONDS = 90;
+
 /** Seconds an "extend" adds to the current pick. */
 export const CLOCK_EXTENSION_SECONDS = 60;
 

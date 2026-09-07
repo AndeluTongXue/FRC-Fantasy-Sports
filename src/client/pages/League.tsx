@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { MAX_PICK_SECONDS, MIN_PICK_SECONDS } from "../../shared/types";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -33,6 +34,7 @@ export interface LeagueDetail {
     commissionerId: string;
     rosterSize: number;
     salaryCap: number;
+    pickSeconds: number;
     maxMembers: number;
     status: string;
     scheduledDraftAt: number | null;
@@ -77,6 +79,10 @@ export function League() {
   const [capInput, setCapInput] = useState("");
   const [savingCap, setSavingCap] = useState(false);
   const [capError, setCapError] = useState("");
+  const [editingClock, setEditingClock] = useState(false);
+  const [clockInput, setClockInput] = useState("");
+  const [savingClock, setSavingClock] = useState(false);
+  const [clockError, setClockError] = useState("");
   const [editingRosterName, setEditingRosterName] = useState(false);
   const [rosterNameInput, setRosterNameInput] = useState("");
   const [savingRosterName, setSavingRosterName] = useState(false);
@@ -111,7 +117,10 @@ export function League() {
   const spent = (userId: string) =>
     picks.filter((pick) => pick.userId === userId).reduce((total, pick) => total + pick.price, 0);
   const isCommissioner = league.commissionerId === user?.id;
+  // Same window as the budget: once the draft starts its alarm is already running on the
+  // old value, and rosters are already being priced against the old cap.
   const canEditCap = isCommissioner && league.status === "setup";
+  const canEditClock = canEditCap;
   const canBan = isCommissioner && league.status === "setup";
   const canLeave = league.status === "setup";
   // members is already sorted by joinedAt ascending; the next-oldest other member is who'd
@@ -158,6 +167,27 @@ export function League() {
       setCapError(caught instanceof Error ? caught.message : "Could not update budget");
     } finally {
       setSavingCap(false);
+    }
+  }
+
+  async function saveClock() {
+    const pickSeconds = Number(clockInput);
+    if (!Number.isInteger(pickSeconds) || pickSeconds < MIN_PICK_SECONDS || pickSeconds > MAX_PICK_SECONDS) {
+      setClockError(`Enter a whole number between ${MIN_PICK_SECONDS} and ${MAX_PICK_SECONDS}`);
+      return;
+    }
+    setSavingClock(true);
+    setClockError("");
+    try {
+      const updated = await api.patch<{ league: LeagueDetail["league"] }>(`/leagues/${league.id}`, {
+        pickSeconds,
+      });
+      setDetail((prev) => prev && { ...prev, league: updated.league });
+      setEditingClock(false);
+    } catch (caught) {
+      setClockError(caught instanceof Error ? caught.message : "Could not update the pick clock");
+    } finally {
+      setSavingClock(false);
     }
   }
 
@@ -411,6 +441,56 @@ export function League() {
             )}
           </p>
           {capError && <p className="mt-1 text-xs text-red-600">{capError}</p>}
+        </div>
+        <div className="rounded-md border border-edge bg-surface px-3 py-2 text-sm">
+          {editingClock ? (
+            <span className="flex flex-wrap items-center gap-1.5">
+              <input
+                type="number"
+                min={MIN_PICK_SECONDS}
+                max={MAX_PICK_SECONDS}
+                step={15}
+                value={clockInput}
+                onChange={(event) => setClockInput(event.target.value)}
+                className="w-20 rounded border border-edge bg-surface-raised px-2 py-0.5 text-sm outline-none focus:border-sky-500"
+              />
+              s per pick
+              <button
+                type="button"
+                onClick={saveClock}
+                disabled={savingClock}
+                className="rounded bg-sky-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+              >
+                {savingClock ? "Saving…" : "Save"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditingClock(false)}
+                disabled={savingClock}
+                className="text-xs text-slate-500 hover:text-slate-700"
+              >
+                Cancel
+              </button>
+            </span>
+          ) : (
+            <span>
+              {league.pickSeconds}s per pick
+              {canEditClock && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setClockInput(String(league.pickSeconds));
+                    setClockError("");
+                    setEditingClock(true);
+                  }}
+                  className="ml-1.5 text-xs text-sky-600 hover:underline"
+                >
+                  Edit
+                </button>
+              )}
+            </span>
+          )}
+          {clockError && <p className="mt-1 text-xs text-red-600">{clockError}</p>}
         </div>
         <div className="rounded-md border border-edge bg-surface px-3 py-2 text-sm">
           Invite code <span className="ml-1 font-mono text-sky-600">{league.inviteCode}</span>

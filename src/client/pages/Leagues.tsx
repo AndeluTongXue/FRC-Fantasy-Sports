@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { DEFAULT_PICK_SECONDS, MAX_PICK_SECONDS, MIN_PICK_SECONDS } from "../../shared/types";
 import type { FrcEvent } from "../../shared/types";
 import { api } from "../lib/api";
 import { earliestScheduleInputValue, formatScheduledDraft } from "../lib/schedule";
@@ -45,6 +46,7 @@ export function Leagues() {
   const [rosterSize, setRosterSize] = useState(6);
   const [maxMembers, setMaxMembers] = useState(8);
   const [salaryCap, setSalaryCap] = useState(200);
+  const [pickSeconds, setPickSeconds] = useState(DEFAULT_PICK_SECONDS);
   const [inviteCode, setInviteCode] = useState("");
   const [minimumCap, setMinimumCap] = useState<MinimumCap | null>(null);
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
@@ -101,6 +103,7 @@ export function Leagues() {
         rosterSize,
         maxMembers,
         salaryCap,
+        pickSeconds,
         scheduledDraftAt: scheduleEnabled ? new Date(scheduledDraftAt).getTime() : undefined,
       });
       setMode("none");
@@ -229,6 +232,23 @@ export function Leagues() {
                 onChange={(event) => setMaxMembers(Number(event.target.value))}
                 className="w-full rounded-md border border-edge bg-surface-raised px-3 py-2 outline-none focus:border-sky-500"
               />
+            </label>
+
+            <label className="block">
+              <span className="mb-1 block text-sm text-slate-700">Seconds per pick</span>
+              <input
+                type="number"
+                min={MIN_PICK_SECONDS}
+                max={MAX_PICK_SECONDS}
+                step={15}
+                value={pickSeconds}
+                onChange={(event) => setPickSeconds(Number(event.target.value))}
+                className="w-full rounded-md border border-edge bg-surface-raised px-3 py-2 outline-none focus:border-sky-500"
+              />
+              <span className="mt-1 block text-xs text-slate-500">
+                {MIN_PICK_SECONDS}–{MAX_PICK_SECONDS}s. When it runs out, the pick is made from that
+                manager's queue. You can change this until the draft starts.
+              </span>
             </label>
 
             <label className="block">

@@ -1,6 +1,11 @@
 import { Hono } from "hono";
 import { applySeasonCap, REGULAR_SEASON_EVENT_CAP } from "../../shared/scoring";
-import { DEFAULT_SCORING } from "../../shared/types";
+import {
+  DEFAULT_PICK_SECONDS,
+  DEFAULT_SCORING,
+  MAX_PICK_SECONDS,
+  MIN_PICK_SECONDS,
+} from "../../shared/types";
 import type { ScoringConfig } from "../../shared/types";
 import type { AppContext } from "../lib/context";
 import { requireAuth, requireVerifiedEmail } from "../lib/context";
@@ -186,7 +191,7 @@ leagueRoutes.post("/", requireVerifiedEmail, async (c) => {
     roster_size: clamp(body.rosterSize, 3, 10, 6),
     salary_cap: clamp(body.salaryCap, 50, 500, 200),
     max_members: clamp(body.maxMembers, 2, 16, 8),
-    pick_seconds: clamp(body.pickSeconds, 30, 300, 90),
+    pick_seconds: clamp(body.pickSeconds, MIN_PICK_SECONDS, MAX_PICK_SECONDS, DEFAULT_PICK_SECONDS),
     scoring_config: JSON.stringify(DEFAULT_SCORING),
     status: "setup",
     created_at: Date.now(),
@@ -390,10 +395,15 @@ leagueRoutes.get("/:id", async (c) => {
 
 /** Only the salary cap is editable, and only before the draft starts — once picks exist,
  * changing the cap would retroactively make some already-drafted picks illegal. */
+/**
+ * Pre-draft league settings the commissioner can still change: the salary cap and the pick
+ * clock. Both are locked once the draft starts — the cap because rosters are already priced
+ * against it, the clock because the draft room's alarm is already running on it.
+ */
 leagueRoutes.patch("/:id", async (c) => {
   const leagueId = c.req.param("id");
   const user = c.get("user");
-  const body = await c.req.json<{ salaryCap?: unknown }>();
+  const body = await c.req.json<{ salaryCap?: unknown; pickSeconds?: unknown }>();
 
   const league = await c.env.DB.prepare("SELECT * FROM leagues WHERE id = ?")
     .bind(leagueId)
@@ -403,18 +413,48 @@ leagueRoutes.patch("/:id", async (c) => {
     return c.json({ error: "Only the commissioner can edit this league" }, 403);
   }
   if (league.status !== "setup") {
-    return c.json({ error: "The budget can't change once the draft has started" }, 409);
+    return c.json({ error: "League settings can't change once the draft has started" }, 409);
   }
 
-  if (body.salaryCap === undefined) return c.json({ league: toLeague(league) });
+  const updates: { column: string; value: number }[] = [];
 
-  const salaryCap = Number(body.salaryCap);
-  if (!Number.isFinite(salaryCap) || !Number.isInteger(salaryCap) || salaryCap < 50 || salaryCap > 500) {
-    return c.json({ error: "Salary cap must be a whole number between $50 and $500" }, 400);
+  if (body.salaryCap !== undefined) {
+    const salaryCap = Number(body.salaryCap);
+    if (!Number.isFinite(salaryCap) || !Number.isInteger(salaryCap) || salaryCap < 50 || salaryCap > 500) {
+      return c.json({ error: "Salary cap must be a whole number between $50 and $500" }, 400);
+    }
+    updates.push({ column: "salary_cap", value: salaryCap });
   }
 
-  await c.env.DB.prepare("UPDATE leagues SET salary_cap = ? WHERE id = ?").bind(salaryCap, leagueId).run();
-  return c.json({ league: toLeague({ ...league, salary_cap: salaryCap }) });
+  if (body.pickSeconds !== undefined) {
+    const pickSeconds = Number(body.pickSeconds);
+    // Validated rather than clamped: silently turning a mistyped 5 into 30 leaves the
+    // commissioner believing they set something they didn't.
+    if (
+      !Number.isFinite(pickSeconds) ||
+      !Number.isInteger(pickSeconds) ||
+      pickSeconds < MIN_PICK_SECONDS ||
+      pickSeconds > MAX_PICK_SECONDS
+    ) {
+      return c.json(
+        { error: `Pick clock must be a whole number of seconds between ${MIN_PICK_SECONDS} and ${MAX_PICK_SECONDS}` },
+        400,
+      );
+    }
+    updates.push({ column: "pick_seconds", value: pickSeconds });
+  }
+
+  if (updates.length === 0) return c.json({ league: toLeague(league) });
+
+  await c.env.DB.prepare(
+    `UPDATE leagues SET ${updates.map((entry) => `${entry.column} = ?`).join(", ")} WHERE id = ?`,
+  )
+    .bind(...updates.map((entry) => entry.value), leagueId)
+    .run();
+
+  const updated = { ...league };
+  for (const entry of updates) (updated as unknown as Record<string, number>)[entry.column] = entry.value;
+  return c.json({ league: toLeague(updated) });
 });
 
 /** A member renames their own team. Purely cosmetic, so unlike the salary cap this is
