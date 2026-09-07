@@ -60,6 +60,7 @@ export class DraftRoom extends DurableObject<Env> {
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server, [userId]);
 
+    await this.healLegacyState();
     const state = this.state ?? (await this.buildPendingState());
     server.send(JSON.stringify({ type: "state", state } satisfies DraftServerMessage));
 
@@ -236,6 +237,27 @@ export class DraftRoom extends DurableObject<Env> {
     const keys = this.state?.picks.map((pick) => pick.teamKey) ?? [];
     if (keys.length === 0) return { clause: "1 = 1", bindings: [] };
     return { clause: `t.team_key NOT IN (${keys.map(() => "?").join(",")})`, bindings: keys };
+  }
+
+  /**
+   * Rooms whose state was persisted before `cheapestPrices` replaced the old single
+   * `cheapestAvailable` number still have the old shape in storage, and the constructor
+   * loads it verbatim — so a room scheduled or drafted under the previous version would
+   * hand a client state with no `cheapestPrices` at all. It's derived data, so recompute
+   * it in place rather than making anyone restart a draft. Cheap to check and a no-op for
+   * every room created since.
+   */
+  private async healLegacyState(): Promise<void> {
+    if (!this.state || Array.isArray(this.state.cheapestPrices)) return;
+
+    let league: LeagueConfig;
+    try {
+      league = await this.loadLeague();
+    } catch {
+      return; // league is gone; nothing worth healing
+    }
+    this.state.cheapestPrices = await this.cheapestPrices(league, Math.max(this.state.totalPicks, 1));
+    await this.persist();
   }
 
   /** Ascending prices of the `limit` cheapest still-undrafted teams. */

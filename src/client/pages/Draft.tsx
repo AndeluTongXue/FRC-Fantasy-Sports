@@ -78,11 +78,14 @@ export function Draft() {
   const mySlotsRemaining = state.rosterSize - state.picks.filter((entry) => entry.userId === user?.id).length;
   const slotsAfterPick = Math.max(mySlotsRemaining - 1, 0);
   const otherCapacity = user ? othersPicksBeforeMyLast(state, user.id, slotsAfterPick) : 0;
-  const reserve = state.cheapestPrices
+  // A room persisted before cheapestPrices existed can still push the old state shape (the
+  // server heals it on connect, but never render-crash the whole page over a missing field).
+  const cheapestPrices = state.cheapestPrices ?? [];
+  const reserve = cheapestPrices
     .slice(otherCapacity, otherCapacity + slotsAfterPick)
     .reduce((sum, price) => sum + price, 0);
   const maxSpend = myBudget - reserve;
-  const cheapestAvailable = state.cheapestPrices[0] ?? Infinity;
+  const cheapestAvailable = cheapestPrices[0] ?? Infinity;
   const stuckNoLegalPick =
     myTurn && state.status === "active" && mySlotsRemaining > 0 && maxSpend < cheapestAvailable;
 
