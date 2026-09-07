@@ -9,6 +9,8 @@ export function Teams() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [pricing, setPricing] = useState(false);
+  const [priceMessage, setPriceMessage] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -37,6 +39,25 @@ export function Teams() {
     }
   }
 
+  /** Re-runs the Statbotics pricing job. Takes a while — it pages through the whole
+   * season's EPA — so this can run long enough to be worth a distinct "in progress"
+   * message rather than just reusing the team-sync spinner. */
+  async function priceTeams() {
+    setPricing(true);
+    setError("");
+    setPriceMessage("");
+    try {
+      const result = await api.post<{ priced: number; epaYear: number }>("/admin/price-teams");
+      const data = await api.get<{ teams: PricedTeam[] }>(`/teams?limit=100&search=${encodeURIComponent(search)}`);
+      setTeams(data.teams);
+      setPriceMessage(`Priced ${result.priced} teams from ${result.epaYear} Statbotics EPA.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Pricing failed");
+    } finally {
+      setPricing(false);
+    }
+  }
+
   return (
     <div>
       <div className="mb-6 flex flex-wrap items-center gap-3">
@@ -48,18 +69,29 @@ export function Teams() {
           className="flex-1 rounded-md border border-edge bg-surface px-3 py-2 text-sm outline-none focus:border-sky-500 sm:max-w-xs"
         />
         {user?.isAdmin && (
-          <button
-            type="button"
-            onClick={syncTeams}
-            disabled={syncing}
-            className="rounded-md border border-edge bg-surface px-3 py-2 text-sm hover:border-sky-600 hover:bg-cream disabled:opacity-50"
-          >
-            {syncing ? "Syncing…" : "Sync from TBA"}
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={syncTeams}
+              disabled={syncing}
+              className="rounded-md border border-edge bg-surface px-3 py-2 text-sm hover:border-sky-600 hover:bg-cream disabled:opacity-50"
+            >
+              {syncing ? "Syncing…" : "Sync from TBA"}
+            </button>
+            <button
+              type="button"
+              onClick={priceTeams}
+              disabled={pricing}
+              className="rounded-md border border-edge bg-surface px-3 py-2 text-sm hover:border-sky-600 hover:bg-cream disabled:opacity-50"
+            >
+              {pricing ? "Pricing…" : "Re-price from Statbotics"}
+            </button>
+          </>
         )}
       </div>
 
       {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
+      {priceMessage && <p className="mb-4 text-sm text-emerald-700">{priceMessage}</p>}
 
       {loading ? (
         <p className="text-sm text-slate-600">Loading…</p>
