@@ -11,6 +11,7 @@ export function Teams() {
   const [syncing, setSyncing] = useState(false);
   const [pricing, setPricing] = useState(false);
   const [priceMessage, setPriceMessage] = useState("");
+  const [priceYear, setPriceYear] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -41,13 +42,18 @@ export function Teams() {
 
   /** Re-runs the Statbotics pricing job. Takes a while — it pages through the whole
    * season's EPA — so this can run long enough to be worth a distinct "in progress"
-   * message rather than just reusing the team-sync spinner. */
+   * message rather than just reusing the team-sync spinner.
+   *
+   * Defaults to last year's final EPA (the normal case). Leagues tied to an Offseason
+   * event (Chezy Champs, IRI, etc.) price from the *current* season's EPA instead — once
+   * that season has concluded, override the year field with it to (re)price those pools. */
   async function priceTeams() {
     setPricing(true);
     setError("");
     setPriceMessage("");
     try {
-      const result = await api.post<{ priced: number; epaYear: number }>("/admin/price-teams");
+      const path = priceYear.trim() ? `/admin/price-teams?year=${encodeURIComponent(priceYear.trim())}` : "/admin/price-teams";
+      const result = await api.post<{ priced: number; epaYear: number }>(path);
       const data = await api.get<{ teams: PricedTeam[] }>(`/teams?limit=100&search=${encodeURIComponent(search)}`);
       setTeams(data.teams);
       setPriceMessage(`Priced ${result.priced} teams from ${result.epaYear} Statbotics EPA.`);
@@ -78,6 +84,14 @@ export function Teams() {
             >
               {syncing ? "Syncing…" : "Sync from TBA"}
             </button>
+            <input
+              type="number"
+              value={priceYear}
+              onChange={(event) => setPriceYear(event.target.value)}
+              placeholder="EPA year"
+              title="Defaults to last season. Override with the current season year to price leagues tied to an Offseason event (Chezy Champs, IRI, etc.) once that season has concluded."
+              className="w-24 rounded-md border border-edge bg-surface px-2 py-2 text-sm outline-none focus:border-sky-500"
+            />
             <button
               type="button"
               onClick={priceTeams}
@@ -89,6 +103,14 @@ export function Teams() {
           </>
         )}
       </div>
+
+      {user?.isAdmin && (
+        <p className="-mt-4 mb-4 text-xs text-slate-500">
+          EPA year defaults to last season. Leagues tied to an Offseason event (Chezy Champs, IRI, etc.) price
+          from the current season's EPA instead — enter it once that season has concluded to (re)price those
+          pools.
+        </p>
+      )}
 
       {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
       {priceMessage && <p className="mb-4 text-sm text-emerald-700">{priceMessage}</p>}
