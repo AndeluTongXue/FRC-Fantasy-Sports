@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export interface QueueTeam {
   teamKey: string;
@@ -40,7 +40,19 @@ export function DraftQueue({ teams, maxSpend, locked, onReorder, onRemove }: Pro
   const listRef = useRef<HTMLOListElement>(null);
   const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
 
-  // While dragging, the list renders in its would-be order, so the row follows the finger.
+  // A ref alongside the state: the window listeners below need the live value, and reading it
+  // through a state updater would mean calling onReorder from inside one — which React is
+  // free to run twice, saving the queue twice.
+  const dragRef = useRef<{ from: number; to: number } | null>(null);
+  const latest = useRef({ teams, onReorder });
+  latest.current = { teams, onReorder };
+
+  function updateDrag(next: { from: number; to: number } | null) {
+    dragRef.current = next;
+    setDrag(next);
+  }
+
+  // While dragging, the list renders in its would-be order, so the row follows the cursor.
   const shown = drag ? move(teams, drag.from, drag.to) : teams;
 
   /** Which slot the pointer is over, measured against the rows as currently rendered. */
@@ -53,35 +65,64 @@ export function DraftQueue({ teams, maxSpend, locked, onReorder, onRemove }: Pro
     return Math.max(rows.length - 1, 0);
   }
 
+  const dragging = drag !== null;
+
+  /**
+   * Tracking on `window` rather than on the drag handle. Bound to the handle, a release that
+   * lands anywhere else — outside the list, outside the window, or after the browser quietly
+   * drops pointer capture — never arrives, and the drag stays stuck to the cursor until the
+   * next click happens to end it.
+   */
+  useEffect(() => {
+    if (!dragging) return;
+
+    function onMove(event: PointerEvent) {
+      const current = dragRef.current;
+      if (!current) return;
+      const to = slotAt(event.clientY);
+      if (to !== current.to) updateDrag({ ...current, to });
+    }
+
+    function commit() {
+      const current = dragRef.current;
+      updateDrag(null);
+      if (!current) return;
+      const { from, to } = current;
+      const { teams: live, onReorder: save } = latest.current;
+      // The list can shrink mid-drag — another manager drafting a queued team removes it —
+      // so only commit while both indices still address the list we started from.
+      if (from !== to && from < live.length && to < live.length) save(move(live, from, to));
+    }
+
+    function cancel() {
+      updateDrag(null);
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") cancel();
+    }
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", commit);
+    window.addEventListener("pointercancel", cancel);
+    // Losing the window mid-drag (alt-tab, a dialog) should drop it rather than leave it live.
+    window.addEventListener("blur", cancel);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", commit);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("blur", cancel);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- resubscribing per move would
+    // churn listeners; the handlers read live values through refs instead.
+  }, [dragging]);
+
   function startDrag(event: React.PointerEvent, from: number) {
     if (locked) return;
     event.preventDefault();
-    setDrag({ from, to: from });
-
-    // Capturing keeps move/up arriving here once the pointer leaves the handle, and on touch
-    // stops the browser reading the gesture as a scroll. It's an enhancement though, not a
-    // precondition — it throws if the pointer is already gone by the time this runs, and
-    // letting that escape would kill the drag before it started.
-    try {
-      event.currentTarget.setPointerCapture(event.pointerId);
-    } catch {
-      // Without capture the drag still tracks while the pointer stays over the list.
-    }
-  }
-
-  function onDragMove(event: React.PointerEvent) {
-    if (!drag) return;
-    const to = slotAt(event.clientY);
-    if (to !== drag.to) setDrag({ ...drag, to });
-  }
-
-  function endDrag() {
-    if (!drag) return;
-    const { from, to } = drag;
-    setDrag(null);
-    // The list can shrink mid-drag — another manager drafting a queued team removes it — so
-    // only commit while both indices still address the list we started from.
-    if (from !== to && from < teams.length && to < teams.length) onReorder(move(teams, from, to));
+    updateDrag({ from, to: from });
   }
 
   return (
@@ -121,9 +162,6 @@ export function DraftQueue({ teams, maxSpend, locked, onReorder, onRemove }: Pro
                     tabIndex={-1}
                     aria-label={`Drag ${team.teamNumber} to reorder`}
                     onPointerDown={(event) => startDrag(event, index)}
-                    onPointerMove={onDragMove}
-                    onPointerUp={endDrag}
-                    onPointerCancel={endDrag}
                     // touch-none stops the browser scrolling the page instead of dragging.
                     className="flex cursor-grab touch-none items-center gap-1 text-slate-300 hover:text-slate-500 active:cursor-grabbing"
                   >
