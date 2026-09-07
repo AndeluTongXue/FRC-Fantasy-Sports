@@ -3,6 +3,25 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { earliestScheduleInputValue, formatScheduledDraft, toLocalInputValue } from "../lib/schedule";
+import { DEFAULT_SCORING } from "../../shared/types";
+import type { ScoringConfig } from "../../shared/types";
+
+const SCORING_FIELDS: { key: keyof ScoringConfig; label: string; step?: number }[] = [
+  { key: "qualWin", label: "Qual win" },
+  { key: "qualTie", label: "Qual tie" },
+  { key: "rankingPoint", label: "Ranking point" },
+  { key: "allianceCaptain", label: "Alliance captain" },
+  { key: "alliancePick1", label: "Alliance 1st pick" },
+  { key: "alliancePick2", label: "Alliance 2nd pick" },
+  { key: "alliancePick3", label: "Alliance 3rd pick" },
+  { key: "playoffWin", label: "Playoff win" },
+  { key: "eventWinner", label: "Event winner" },
+  { key: "eventFinalist", label: "Event finalist" },
+  { key: "awardImpact", label: "Impact award" },
+  { key: "awardEngineeringInspiration", label: "Engineering Inspiration award" },
+  { key: "awardOther", label: "Other award" },
+  { key: "championshipMultiplier", label: "Championship multiplier", step: 0.1 },
+];
 
 export interface LeagueDetail {
   league: {
@@ -17,6 +36,7 @@ export interface LeagueDetail {
     maxMembers: number;
     status: string;
     scheduledDraftAt: number | null;
+    scoringConfig: ScoringConfig;
   };
   members: {
     userId: string;
@@ -65,10 +85,14 @@ export function League() {
   const [scheduleInput, setScheduleInput] = useState("");
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [scheduleError, setScheduleError] = useState("");
+  const [editingScoring, setEditingScoring] = useState(false);
+  const [scoringInput, setScoringInput] = useState<Record<string, string>>({});
+  const [savingScoring, setSavingScoring] = useState(false);
+  const [scoringError, setScoringError] = useState("");
   const [capMinimum, setCapMinimum] = useState<{
     minimumCap: number;
     worstCaseAveragePrice: number;
-    poolSize: number;
+    worstCaseOpponentPicks: number;
     universeSize: number;
     insufficientPool: boolean;
   } | null>(null);
@@ -110,7 +134,7 @@ export function League() {
       .get<{
         minimumCap: number;
         worstCaseAveragePrice: number;
-        poolSize: number;
+        worstCaseOpponentPicks: number;
         universeSize: number;
         insufficientPool: boolean;
       }>(`/leagues/minimum-cap?${params}`)
@@ -217,6 +241,45 @@ export function League() {
     }
   }
 
+  function startEditingScoring() {
+    const input: Record<string, string> = {};
+    for (const field of SCORING_FIELDS) input[field.key] = String(league.scoringConfig[field.key]);
+    setScoringInput(input);
+    setScoringError("");
+    setEditingScoring(true);
+  }
+
+  function resetScoringToDefaults() {
+    const input: Record<string, string> = {};
+    for (const field of SCORING_FIELDS) input[field.key] = String(DEFAULT_SCORING[field.key]);
+    setScoringInput(input);
+  }
+
+  async function saveScoring() {
+    const scoringConfig = {} as ScoringConfig;
+    for (const field of SCORING_FIELDS) {
+      const value = Number(scoringInput[field.key]);
+      if (!Number.isFinite(value)) {
+        setScoringError(`${field.label} must be a number`);
+        return;
+      }
+      scoringConfig[field.key] = value;
+    }
+    setSavingScoring(true);
+    setScoringError("");
+    try {
+      const result = await api.put<{ scoringConfig: ScoringConfig }>(`/leagues/${league.id}/scoring`, {
+        scoringConfig,
+      });
+      setDetail((prev) => prev && { ...prev, league: { ...prev.league, scoringConfig: result.scoringConfig } });
+      setEditingScoring(false);
+    } catch (caught) {
+      setScoringError(caught instanceof Error ? caught.message : "Could not update scoring weights");
+    } finally {
+      setSavingScoring(false);
+    }
+  }
+
   async function leaveLeague() {
     setLeaving(true);
     setLeaveError("");
@@ -314,7 +377,8 @@ export function League() {
                 {capMinimum && (
                   <span className="block w-full text-xs text-slate-500">
                     Minimum: ${capMinimum.minimumCap} — guarantees every manager can still fill their
-                    roster, worst case (from the {capMinimum.poolSize} priciest teams in the pool){" "}
+                    roster, worst case if opponents draft the {capMinimum.worstCaseOpponentPicks} cheapest
+                    teams before you do{" "}
                     <button
                       type="button"
                       onClick={() => setCapInput(String(capMinimum.minimumCap))}
@@ -429,6 +493,77 @@ export function League() {
             </button>
           ) : (
             <p className="text-sm text-slate-500">The commissioner hasn't scheduled a start time yet.</p>
+          )}
+        </div>
+      )}
+
+      {league.status === "setup" && (
+        <div className="mb-6 rounded-lg border border-edge bg-surface p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="text-sm font-medium text-slate-700">Scoring weights</h2>
+            {isCommissioner && !editingScoring && (
+              <button type="button" onClick={startEditingScoring} className="text-xs text-sky-600 hover:underline">
+                Edit
+              </button>
+            )}
+          </div>
+          {scoringError && <p className="mb-2 text-xs text-red-600">{scoringError}</p>}
+          {editingScoring ? (
+            <div>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {SCORING_FIELDS.map((field) => (
+                  <label key={field.key} className="block text-xs">
+                    <span className="mb-1 block text-slate-600">{field.label}</span>
+                    <input
+                      type="number"
+                      step={field.step ?? 1}
+                      value={scoringInput[field.key] ?? ""}
+                      onChange={(event) =>
+                        setScoringInput((prev) => ({ ...prev, [field.key]: event.target.value }))
+                      }
+                      className="w-full rounded border border-edge bg-surface-raised px-2 py-1 text-sm outline-none focus:border-sky-500"
+                    />
+                  </label>
+                ))}
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={saveScoring}
+                  disabled={savingScoring}
+                  className="rounded-md bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+                >
+                  {savingScoring ? "Saving…" : "Save"}
+                </button>
+                <button
+                  type="button"
+                  onClick={resetScoringToDefaults}
+                  disabled={savingScoring}
+                  className="rounded-md border border-edge bg-surface px-3 py-1.5 text-sm hover:border-sky-600 hover:bg-cream disabled:opacity-50"
+                >
+                  Reset to defaults
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingScoring(false)}
+                  disabled={savingScoring}
+                  className="text-sm text-slate-500 hover:text-slate-700"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-slate-500">
+              Qual win/tie {league.scoringConfig.qualWin}/{league.scoringConfig.qualTie} · RP{" "}
+              {league.scoringConfig.rankingPoint} · alliance captain/1st/2nd/3rd{" "}
+              {league.scoringConfig.allianceCaptain}/{league.scoringConfig.alliancePick1}/
+              {league.scoringConfig.alliancePick2}/{league.scoringConfig.alliancePick3} · playoff win{" "}
+              {league.scoringConfig.playoffWin} · event win/finalist {league.scoringConfig.eventWinner}/
+              {league.scoringConfig.eventFinalist} · awards {league.scoringConfig.awardImpact}/
+              {league.scoringConfig.awardEngineeringInspiration}/{league.scoringConfig.awardOther} ·
+              championship ×{league.scoringConfig.championshipMultiplier}
+            </p>
           )}
         </div>
       )}

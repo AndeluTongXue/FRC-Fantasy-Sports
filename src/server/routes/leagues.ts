@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { applySeasonCap, REGULAR_SEASON_EVENT_CAP } from "../../shared/scoring";
 import { DEFAULT_SCORING } from "../../shared/types";
+import type { ScoringConfig } from "../../shared/types";
 import type { AppContext } from "../lib/context";
 import { requireAuth } from "../lib/context";
 import { seasonYear } from "../lib/env";
@@ -36,6 +37,47 @@ function validateScheduledDraftAt(value: unknown): ScheduleValidation {
     return { ok: false, error: "Scheduled draft time can't be more than 180 days out" };
   }
   return { ok: true, value: Math.trunc(ms) };
+}
+
+/** Point values are generous but bounded so a typo (or someone messing around) can't
+ * produce nonsense standings; the multiplier gets its own, tighter range since it scales
+ * everything else at a Championship event. */
+const SCORING_FIELD_BOUNDS: Record<keyof ScoringConfig, [number, number]> = {
+  qualWin: [0, 200],
+  qualTie: [0, 200],
+  rankingPoint: [0, 200],
+  allianceCaptain: [0, 200],
+  alliancePick1: [0, 200],
+  alliancePick2: [0, 200],
+  alliancePick3: [0, 200],
+  playoffWin: [0, 200],
+  eventWinner: [0, 500],
+  eventFinalist: [0, 500],
+  awardImpact: [0, 200],
+  awardEngineeringInspiration: [0, 200],
+  awardOther: [0, 200],
+  championshipMultiplier: [0, 10],
+};
+
+type ScoringValidation = { ok: true; value: ScoringConfig } | { ok: false; error: string };
+
+function validateScoringConfig(value: unknown): ScoringValidation {
+  if (typeof value !== "object" || value === null) {
+    return { ok: false, error: "scoringConfig must be an object" };
+  }
+  const input = value as Record<string, unknown>;
+  const result = {} as ScoringConfig;
+
+  for (const key of Object.keys(SCORING_FIELD_BOUNDS) as (keyof ScoringConfig)[]) {
+    const [min, max] = SCORING_FIELD_BOUNDS[key];
+    const raw = input[key];
+    const parsed = typeof raw === "number" ? raw : Number(raw);
+    if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+      return { ok: false, error: `${key} must be a number between ${min} and ${max}` };
+    }
+    result[key] = parsed;
+  }
+  return { ok: true, value: result };
 }
 
 function generateInviteCode(): string {
@@ -454,6 +496,37 @@ leagueRoutes.delete("/:id/schedule", async (c) => {
   await stub.setSchedule(leagueId, null);
 
   return c.json({ ok: true });
+});
+
+/**
+ * Retunes a league's scoring weights. Commissioner-only and pre-draft-only: once picks
+ * exist, changing weights would retroactively rewrite points that owners already earned
+ * (or, for a season league, are actively earning) under the old values.
+ */
+leagueRoutes.put("/:id/scoring", async (c) => {
+  const leagueId = c.req.param("id");
+  const user = c.get("user");
+  const body = await c.req.json<{ scoringConfig?: unknown }>();
+
+  const league = await c.env.DB.prepare("SELECT commissioner_id, status FROM leagues WHERE id = ?")
+    .bind(leagueId)
+    .first<{ commissioner_id: string; status: string }>();
+  if (!league) return c.json({ error: "League not found" }, 404);
+  if (league.commissioner_id !== user.id) {
+    return c.json({ error: "Only the commissioner can edit scoring weights" }, 403);
+  }
+  if (league.status !== "setup") {
+    return c.json({ error: "Scoring weights can't change once the draft has started" }, 409);
+  }
+
+  const validation = validateScoringConfig(body.scoringConfig);
+  if (!validation.ok) return c.json({ error: validation.error }, 400);
+
+  await c.env.DB.prepare("UPDATE leagues SET scoring_config = ? WHERE id = ?")
+    .bind(JSON.stringify(validation.value), leagueId)
+    .run();
+
+  return c.json({ scoringConfig: validation.value });
 });
 
 leagueRoutes.delete("/:id", async (c) => {
