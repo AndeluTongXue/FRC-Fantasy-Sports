@@ -1,6 +1,7 @@
 /**
- * Verifies the commissioner's in-draft controls — pause/resume, clock extension, drafting on
- * a manager's behalf, and undoing a pick — and that a plain manager can invoke none of them.
+ * Verifies the commissioner's in-draft controls — pause/resume, clock extension, running the
+ * on-clock manager's autopick early, and undoing a pick — and that a plain manager can invoke
+ * none of them.
  *
  * The authorization half matters most: each of these is a way to take an extra turn if the
  * wrong person can reach it.
@@ -120,9 +121,9 @@ for (const message of [{ type: "pause" }, { type: "resume" }, { type: "extend" }
   check(`"${message.type}" is refused`, memberSocket.takeError() === "Only the commissioner can do that");
 }
 memberSocket.errors.length = 0;
-memberSocket.send({ type: "pickFor", teamKey: (await cheapest(member.cookie)).teamKey });
+memberSocket.send({ type: "autopick" });
 await wait(600);
-check(`"pickFor" is refused`, memberSocket.takeError() === "Only the commissioner can do that");
+check(`"autopick" is refused`, memberSocket.takeError() === "Only the commissioner can do that");
 check("and none of that started a pick", bossSocket.state().picks.length === 0, `${bossSocket.state().picks.length}`);
 
 console.log("\nPausing stops the clock and blocks picking:");
@@ -148,6 +149,11 @@ check(
   clockSocket.takeError() === "The commissioner has paused the draft",
 );
 check("still no picks", bossSocket.state().picks.length === 0, `${bossSocket.state().picks.length}`);
+
+bossSocket.errors.length = 0;
+bossSocket.send({ type: "autopick" });
+await wait(600);
+check("autodraft is refused while paused too", bossSocket.takeError() === "Resume the draft first");
 
 console.log("\nExtending while paused adds to the banked time:");
 const banked = bossSocket.state().pausedRemainingMs;
@@ -187,24 +193,40 @@ check(
   `+${Math.round((bossSocket.state().deadline - runningDeadline) / 1000)}s`,
 );
 
-console.log("\nThe commissioner drafts for whoever is on the clock:");
+console.log("\nAutodraft takes from the on-clock manager's queue, not the commissioner's choice:");
 const current = bossSocket.state().currentUserId;
 const currentCookie = current === boss.user.id ? boss.cookie : member.cookie;
-const target = await cheapest(currentCookie);
+
+// A no-EPA team is exactly what the `bestAvailable` fallback would take last, so if autopick
+// lands on it we know the queue drove the decision rather than the fallback agreeing by luck.
+const wholePool = (await api(currentCookie, `/api/leagues/${league.id}/pool?limit=200`)).body.teams;
+const fallbackFavourite = wholePool[0];
+const target = wholePool[wholePool.length - 1];
+await api(currentCookie, `/api/leagues/${league.id}/queue`, {
+  method: "PUT",
+  body: JSON.stringify({ teamKeys: [target.teamKey] }),
+});
+
 const budgetBefore = bossSocket.state().budgets[current];
-bossSocket.send({ type: "pickFor", teamKey: target.teamKey });
-await until(() => bossSocket.state().picks.length === 1, 8000, "the pick");
+bossSocket.send({ type: "autopick" });
+await until(() => bossSocket.state().picks.length === 1, 8000, "the autopick");
 const forced = bossSocket.state().picks[0];
 check("the pick lands on the manager on the clock", forced.userId === current, `owner ${forced.userId === current}`);
-check("with the requested team", forced.teamKey === target.teamKey, `${forced.teamKey}`);
+check(
+  "it takes their queued team",
+  forced.teamKey === target.teamKey,
+  `took ${forced.teamKey.replace("frc", "")}, queued ${target.teamNumber}`,
+);
+check(
+  "not the team the commissioner would have picked",
+  forced.teamKey !== fallbackFavourite.teamKey,
+  `fallback favourite was ${fallbackFavourite.teamNumber}`,
+);
 check(
   "and is charged to their budget, not the commissioner's",
   bossSocket.state().budgets[current] === budgetBefore - target.price,
-  `${budgetBefore} → ${bossSocket.state().budgets[current]}`,
+  `${budgetBefore} then ${bossSocket.state().budgets[current]}`,
 );
-
-const persisted = (await api(boss.cookie, `/api/leagues/${league.id}`)).body.picks ?? [];
-check("the pick reached D1", persisted.some((p) => p.teamKey === target.teamKey), `${persisted.length} rows`);
 
 console.log("\nUndo reverses it, refunds it, and rewinds the turn:");
 bossSocket.send({ type: "undo" });

@@ -35,7 +35,7 @@ function othersPicksBeforeMyLast(state: DraftState, userId: string, slotsAfterPi
 export function Draft() {
   const { leagueId = "" } = useParams();
   const { user } = useAuth();
-  const { state, error, connected, start, pick, pause, resume, extend, pickFor, undo, dismissError } =
+  const { state, error, connected, start, pick, pause, resume, extend, autopick, undo, dismissError } =
     useDraft(leagueId, user?.id ?? null);
   const [detail, setDetail] = useState<LeagueDetail | null>(null);
   const [pool, setPool] = useState<PoolTeam[]>([]);
@@ -103,33 +103,20 @@ export function Draft() {
   // opponent picks land before this manager's own roster is full — not `slots * cheapest`,
   // which both overstates what's affordable (each team sells once) and ignores that
   // opponents get chances to hoard cheap teams in between this manager's own turns.
-  //
-  // Taken per manager, not just for the viewer: a commissioner drafting on someone's behalf
-  // spends that manager's budget, so their limit is the one the buttons must reflect.
-  function spendLimitFor(ownerId: string | null): number {
-    if (!ownerId) return 0;
-    const budget = state!.budgets[ownerId] ?? 0;
-    const slotsLeft = state!.rosterSize - state!.picks.filter((entry) => entry.userId === ownerId).length;
-    const slotsAfterPick = Math.max(slotsLeft - 1, 0);
-    const otherCapacity = othersPicksBeforeMyLast(state!, ownerId, slotsAfterPick);
-    const reserve = cheapestPrices
-      .slice(otherCapacity, otherCapacity + slotsAfterPick)
-      .reduce((sum, price) => sum + price, 0);
-    return budget - reserve;
-  }
-
   const mySlotsRemaining = state.rosterSize - state.picks.filter((entry) => entry.userId === user?.id).length;
-  const maxSpend = spendLimitFor(user?.id ?? null);
+  const slotsAfterPick = Math.max(mySlotsRemaining - 1, 0);
+  const otherCapacity = user ? othersPicksBeforeMyLast(state, user.id, slotsAfterPick) : 0;
+  const reserve = cheapestPrices
+    .slice(otherCapacity, otherCapacity + slotsAfterPick)
+    .reduce((sum, price) => sum + price, 0);
+  const maxSpend = myBudget - reserve;
   const cheapestAvailable = cheapestPrices[0] ?? Infinity;
   const queueLocked = state.status === "complete";
   const paused = state.pausedRemainingMs !== null;
-  // The commissioner drafts on someone's behalf only when it isn't already their own turn —
-  // otherwise the ordinary pick path applies and the button should say "Draft".
-  const canPickForOther = isCommissioner && state.status === "active" && !paused && !myTurn;
-  // Whose money the pool's buttons would actually spend.
-  const spendingLimit = canPickForOther ? spendLimitFor(state.currentUserId) : maxSpend;
-  const canDraftRow = (price: number) =>
-    state.status === "active" && !paused && price <= spendingLimit && (myTurn || canPickForOther);
+  // The commissioner can run the on-clock manager's autopick early, but only for someone
+  // else — their own turn is theirs to take.
+  const canAutopickForOther = isCommissioner && state.status === "active" && !paused && !myTurn;
+  const canDraftRow = (price: number) => myTurn && state.status === "active" && !paused && price <= maxSpend;
   const stuckNoLegalPick =
     myTurn && state.status === "active" && mySlotsRemaining > 0 && maxSpend < cheapestAvailable;
 
@@ -243,6 +230,16 @@ export function Draft() {
               >
                 +{CLOCK_EXTENSION_SECONDS}s to this pick
               </button>
+              <button
+                type="button"
+                onClick={autopick}
+                disabled={!canAutopickForOther}
+                className="rounded-md border border-edge px-3 py-1.5 text-sm text-slate-700 hover:bg-surface-raised disabled:opacity-40"
+              >
+                {canAutopickForOther
+                  ? `Autodraft for ${nameOf(state.currentUserId)}`
+                  : "Autodraft this pick"}
+              </button>
             </>
           )}
           <button
@@ -256,8 +253,8 @@ export function Draft() {
           <span className="text-xs text-slate-500">
             {state.status === "complete"
               ? "Undoing reopens the draft and puts that manager back on the clock."
-              : canPickForOther
-                ? `You can draft for ${nameOf(state.currentUserId)} from the list below.`
+              : canAutopickForOther
+                ? "Autodrafting takes from their queue, or the best team they can afford."
                 : "Pausing keeps the time left on the clock rather than restarting the pick."}
           </span>
         </div>
@@ -322,12 +319,10 @@ export function Draft() {
                           <button
                             type="button"
                             disabled={!canDraftRow(team.price)}
-                            onClick={() => (myTurn ? pick(team.teamKey) : pickFor(team.teamKey))}
-                            className={`rounded px-3 py-1 text-xs font-medium text-white disabled:bg-surface-raised disabled:text-slate-400 ${
-                              canPickForOther ? "bg-amber-600 hover:bg-amber-700" : "bg-sky-600 hover:bg-sky-700"
-                            }`}
+                            onClick={() => pick(team.teamKey)}
+                            className="rounded bg-sky-600 px-3 py-1 text-xs font-medium text-white hover:bg-sky-700 disabled:bg-surface-raised disabled:text-slate-400"
                           >
-                            {canPickForOther ? "Draft for them" : "Draft"}
+                            Draft
                           </button>
                         </div>
                       </td>

@@ -161,9 +161,10 @@ export type DraftClientMessage =
   | { type: "pause" }
   | { type: "resume" }
   | { type: "extend" }
-  // Separate from "pick" rather than an override on it: a commissioner picking for the
-  // manager on the clock should have to say so, not do it by mistyping their own turn.
-  | { type: "pickFor"; teamKey: string }
+  // Runs the manager's own autopick early, rather than letting the commissioner choose a
+  // team for them: which team to take is that manager's call, and their queue already
+  // states it.
+  | { type: "autopick" }
   | { type: "undo" };
 
 /** Seconds an "extend" adds to the current pick. */

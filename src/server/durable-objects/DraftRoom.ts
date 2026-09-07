@@ -84,7 +84,7 @@ export class DraftRoom extends DurableObject<Env> {
       else if (message.type === "pause") await this.setPaused(userId, true);
       else if (message.type === "resume") await this.setPaused(userId, false);
       else if (message.type === "extend") await this.extendClock(userId);
-      else if (message.type === "pickFor") await this.pickForCurrent(userId, message.teamKey);
+      else if (message.type === "autopick") await this.autopickForCurrent(userId);
       else if (message.type === "undo") await this.undoLastPick(userId);
     } catch (error) {
       this.sendError(ws, error instanceof Error ? error.message : "Draft action failed");
@@ -99,8 +99,7 @@ export class DraftRoom extends DurableObject<Env> {
     // Pausing deletes the alarm, so this is belt and braces against a stale one firing.
     if (this.state.pausedRemainingMs !== null) return;
 
-    const onClock = this.state.currentUserId;
-    if (!onClock) return;
+    if (!this.state.currentUserId) return;
 
     let league: LeagueConfig;
     try {
@@ -110,6 +109,21 @@ export class DraftRoom extends DurableObject<Env> {
       await this.resetForDeletion();
       return;
     }
+    await this.autoDraftCurrent(league);
+  }
+
+  /**
+   * Makes the pick the clock would have made for whoever is on it: the first affordable team
+   * on their queue, or the best they can afford if they never set one. Shared by the expiring
+   * clock and the commissioner's button, so the two can't drift apart.
+   *
+   * Skips the turn when nothing qualifies — the same outcome as letting the clock run out,
+   * which is the only honest answer when the cheap tier has been bought up.
+   */
+  private async autoDraftCurrent(league: LeagueConfig): Promise<void> {
+    const onClock = this.state?.currentUserId;
+    if (!this.state || !onClock) return;
+
     const budget = this.state.budgets[onClock] ?? 0;
     const slotsAfterPick = this.slotsRemaining(onClock) - 1;
     const maxSpend = budget - (await this.reserveCost(league, onClock, slotsAfterPick));
@@ -515,14 +529,17 @@ export class DraftRoom extends DurableObject<Env> {
     this.broadcast();
   }
 
-  /** Drafts for whoever is on the clock. The pick is charged to that manager and obeys every
-   * rule their own pick would, budget guard included — this is help, not an exemption. */
-  private async pickForCurrent(userId: string, teamKey: string): Promise<void> {
-    await this.requireCommissioner(userId);
+  /**
+   * Runs the on-clock manager's autopick now instead of waiting out their clock — for when
+   * they've plainly gone. It takes from their queue and spends their budget, so the
+   * commissioner is skipping the wait, not making the decision.
+   */
+  private async autopickForCurrent(userId: string): Promise<void> {
+    const league = await this.requireCommissioner(userId);
     if (!this.state || this.state.status !== "active") throw new Error("The draft isn't running");
-    const onClock = this.state.currentUserId;
-    if (!onClock) throw new Error("Nobody is on the clock");
-    await this.makePick(onClock, teamKey, { asCommissioner: true });
+    if (this.state.pausedRemainingMs !== null) throw new Error("Resume the draft first");
+    if (!this.state.currentUserId) throw new Error("Nobody is on the clock");
+    await this.autoDraftCurrent(league);
   }
 
   /**
@@ -567,18 +584,12 @@ export class DraftRoom extends DurableObject<Env> {
     this.broadcast();
   }
 
-  private async makePick(
-    userId: string,
-    teamKey: string,
-    options: { asCommissioner?: boolean } = {},
-  ): Promise<void> {
+  private async makePick(userId: string, teamKey: string): Promise<void> {
     if (!this.state || this.state.status !== "active") throw new Error("Draft is not running");
     if (this.state.pausedRemainingMs !== null) {
       throw new Error("The commissioner has paused the draft");
     }
-    // Skipped for a commissioner pick, which has already established that `userId` is
-    // whoever is on the clock.
-    if (!options.asCommissioner && this.state.currentUserId !== userId) throw new Error("It's not your turn");
+    if (this.state.currentUserId !== userId) throw new Error("It's not your turn");
     if (this.state.picks.some((pick) => pick.teamKey === teamKey)) throw new Error("That team is already drafted");
 
     const league = await this.loadLeague();
