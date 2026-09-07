@@ -85,6 +85,11 @@ export function useDraft(leagueId: string, userId: string | null) {
     connected,
     start: useCallback(() => send({ type: "start" }), [send]),
     pick: useCallback((teamKey: string) => send({ type: "pick", teamKey }), [send]),
+    pause: useCallback(() => send({ type: "pause" }), [send]),
+    resume: useCallback(() => send({ type: "resume" }), [send]),
+    extend: useCallback(() => send({ type: "extend" }), [send]),
+    pickFor: useCallback((teamKey: string) => send({ type: "pickFor", teamKey }), [send]),
+    undo: useCallback(() => send({ type: "undo" }), [send]),
     dismissError: useCallback(() => setError(""), []),
   };
 }

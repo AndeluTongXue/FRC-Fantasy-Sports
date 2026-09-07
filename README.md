@@ -29,6 +29,22 @@ rare case nothing qualifies (the cheap tier got bought up before your turn), the
 skipped and that roster slot goes unfilled; the draft room shows a warning when this is
 about to happen to you.
 
+**Commissioner controls** — a live draft can go wrong in ways the managers can't fix
+themselves: a dropped connection, someone who stepped away, a misclick. The commissioner can
+**pause** it (the clock stops and picking is blocked; resuming hands back the time that was
+left rather than restarting the pick), **add 60 seconds** to the current pick, **draft on
+behalf of** whoever is on the clock, and **undo the last pick** — which refunds it, puts that
+manager back on the clock, and reopens the draft if it had already finished. All four are
+commissioner-only: in a manager's hands each is a way to take an extra turn.
+
+A commissioner pick is charged to the manager on the clock and obeys every rule their own
+pick would, budget guard included — it's help, not an exemption. Undo returns the team to the
+pool but not to anyone's queue: drafting it deleted those rows and nothing records who had
+queued it.
+
+Deliberately not included: skipping a manager's pick outright. It permanently costs them a
+roster slot, and drafting for them covers the same situation without the collateral damage.
+
 **Draft queue** — each manager keeps a private ordered list of teams to take if their clock
 expires. Autopick walks it and takes the first entry that's still undrafted, still in the
 pool, and affordable within the reserve guard, skipping the rest — a queue written before
@@ -285,6 +301,7 @@ node scripts/schedule-draft-smoke.mjs # scheduling at creation/after, edit/cance
 node scripts/auth-email-smoke.mjs    # confirmation gating, single-use links, reset + session invalidation, no address enumeration
 node scripts/google-oauth-smoke.mjs  # PKCE/state on the way out, every callback refusal on the way back
 node scripts/draft-queue-smoke.mjs   # queue privacy/validation, and an expired clock drafting from the queue
+node scripts/commissioner-controls-smoke.mjs # pause/resume/extend/pick-for/undo, and that a manager can invoke none of them
 ```
 
 `draft-queue-smoke.mjs` takes about 45 seconds: `pick_seconds` is clamped to a 30s minimum,

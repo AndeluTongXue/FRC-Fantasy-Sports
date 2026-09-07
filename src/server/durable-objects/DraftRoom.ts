@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { DraftClientMessage, DraftServerMessage, DraftState } from "../../shared/types";
-import { pickOwner } from "../../shared/types";
+import { CLOCK_EXTENSION_SECONDS, pickOwner } from "../../shared/types";
 import type { Env } from "../lib/env";
 import { pricingYearForLeague } from "../lib/pricing";
 import { DEFAULT_TEAM_PRICE } from "../lib/statbotics";
@@ -81,6 +81,11 @@ export class DraftRoom extends DurableObject<Env> {
     try {
       if (message.type === "start") await this.startDraft(userId);
       else if (message.type === "pick") await this.makePick(userId, message.teamKey);
+      else if (message.type === "pause") await this.setPaused(userId, true);
+      else if (message.type === "resume") await this.setPaused(userId, false);
+      else if (message.type === "extend") await this.extendClock(userId);
+      else if (message.type === "pickFor") await this.pickForCurrent(userId, message.teamKey);
+      else if (message.type === "undo") await this.undoLastPick(userId);
     } catch (error) {
       this.sendError(ws, error instanceof Error ? error.message : "Draft action failed");
     }
@@ -91,6 +96,8 @@ export class DraftRoom extends DurableObject<Env> {
   async alarm(): Promise<void> {
     if (this.state?.status === "pending") return this.runScheduledStart();
     if (!this.state || this.state.status !== "active") return;
+    // Pausing deletes the alarm, so this is belt and braces against a stale one firing.
+    if (this.state.pausedRemainingMs !== null) return;
 
     const onClock = this.state.currentUserId;
     if (!onClock) return;
@@ -211,6 +218,7 @@ export class DraftRoom extends DurableObject<Env> {
       totalPicks: roster.length * league.roster_size,
       currentUserId: null,
       deadline: null,
+      pausedRemainingMs: null,
       scheduledDraftAt: null,
       budgets: Object.fromEntries(roster.map((member) => [member.user_id, league.salary_cap])),
       picks: [],
@@ -252,7 +260,16 @@ export class DraftRoom extends DurableObject<Env> {
    * every room created since.
    */
   private async healLegacyState(): Promise<void> {
-    if (!this.state || Array.isArray(this.state.cheapestPrices)) return;
+    if (!this.state) return;
+
+    // Rooms persisted before pause existed have no such field, and `null` (not paused) is
+    // the only sane reading of a room that was drafting happily without one.
+    if (this.state.pausedRemainingMs === undefined) {
+      this.state.pausedRemainingMs = null;
+      await this.persist();
+    }
+
+    if (Array.isArray(this.state.cheapestPrices)) return;
 
     let league: LeagueConfig;
     try {
@@ -421,6 +438,7 @@ export class DraftRoom extends DurableObject<Env> {
       totalPicks: order.length * league.roster_size,
       currentUserId: order[0],
       deadline: Date.now() + league.pick_seconds * 1000,
+      pausedRemainingMs: null,
       scheduledDraftAt: null,
       budgets: Object.fromEntries(order.map((id) => [id, league.salary_cap])),
       picks: [],
@@ -446,9 +464,121 @@ export class DraftRoom extends DurableObject<Env> {
     this.broadcast();
   }
 
-  private async makePick(userId: string, teamKey: string): Promise<void> {
+  /** Every control below is the commissioner's alone: they exist to rescue a draft, and in
+   * a manager's hands each of them is a way to take an extra turn. */
+  private async requireCommissioner(userId: string): Promise<LeagueConfig> {
+    const league = await this.loadLeague();
+    if (userId !== league.commissioner_id) throw new Error("Only the commissioner can do that");
+    return league;
+  }
+
+  /**
+   * Stops and restarts the pick clock. Pausing banks whatever time was left and drops the
+   * alarm; resuming hands that same time back rather than restarting the pick, so a manager
+   * who was ten seconds from the buzzer doesn't get a fresh ninety.
+   */
+  private async setPaused(userId: string, paused: boolean): Promise<void> {
+    const league = await this.requireCommissioner(userId);
+    if (!this.state || this.state.status !== "active") throw new Error("The draft isn't running");
+    if (paused === (this.state.pausedRemainingMs !== null)) return; // already in that state
+
+    if (paused) {
+      const left = this.state.deadline === null ? league.pick_seconds * 1000 : this.state.deadline - Date.now();
+      this.state.pausedRemainingMs = Math.max(left, 1000);
+      this.state.deadline = null;
+      await this.ctx.storage.deleteAlarm();
+    } else {
+      this.state.deadline = Date.now() + this.state.pausedRemainingMs!;
+      this.state.pausedRemainingMs = null;
+      await this.ctx.storage.setAlarm(this.state.deadline);
+    }
+
+    await this.persist();
+    this.broadcast();
+  }
+
+  /** Buys the manager on the clock another minute — the common case being "one second, I'm
+   * nearly there", which pausing the whole room is too blunt an answer to. */
+  private async extendClock(userId: string): Promise<void> {
+    await this.requireCommissioner(userId);
+    if (!this.state || this.state.status !== "active") throw new Error("The draft isn't running");
+
+    const extra = CLOCK_EXTENSION_SECONDS * 1000;
+    if (this.state.pausedRemainingMs !== null) {
+      this.state.pausedRemainingMs += extra;
+    } else {
+      this.state.deadline = (this.state.deadline ?? Date.now()) + extra;
+      await this.ctx.storage.setAlarm(this.state.deadline);
+    }
+
+    await this.persist();
+    this.broadcast();
+  }
+
+  /** Drafts for whoever is on the clock. The pick is charged to that manager and obeys every
+   * rule their own pick would, budget guard included — this is help, not an exemption. */
+  private async pickForCurrent(userId: string, teamKey: string): Promise<void> {
+    await this.requireCommissioner(userId);
+    if (!this.state || this.state.status !== "active") throw new Error("The draft isn't running");
+    const onClock = this.state.currentUserId;
+    if (!onClock) throw new Error("Nobody is on the clock");
+    await this.makePick(onClock, teamKey, { asCommissioner: true });
+  }
+
+  /**
+   * Reverses the most recent pick, refunds it, and puts that manager back on the clock.
+   *
+   * The team returns to the pool but not to anyone's queue — drafting it deleted those rows
+   * and there's nothing left to say who had queued it. Managers can re-add it.
+   */
+  private async undoLastPick(userId: string): Promise<void> {
+    const league = await this.requireCommissioner(userId);
+    if (!this.state) throw new Error("The draft hasn't started");
+    if (this.state.status === "pending") throw new Error("The draft hasn't started");
+
+    const last = this.state.picks.pop();
+    if (!last) throw new Error("There's nothing to undo");
+
+    this.state.budgets[last.userId] = (this.state.budgets[last.userId] ?? 0) + last.price;
+    await this.env.DB.prepare("DELETE FROM draft_picks WHERE league_id = ? AND pick_number = ?")
+      .bind(league.id, last.pickNumber)
+      .run();
+
+    // A completed draft reopens: the league goes back to drafting, and the roster it locked
+    // in is no longer final.
+    const wasComplete = this.state.status === "complete";
+    this.state.status = "active";
+    this.state.currentPick = last.pickNumber;
+    this.state.currentUserId = pickOwner(this.state.order, this.state.currentPick);
+    if (wasComplete) {
+      await this.env.DB.prepare("UPDATE leagues SET status = 'drafting' WHERE id = ?").bind(league.id).run();
+    }
+
+    if (this.state.pausedRemainingMs !== null) {
+      this.state.pausedRemainingMs = league.pick_seconds * 1000;
+      this.state.deadline = null;
+    } else {
+      this.state.deadline = Date.now() + league.pick_seconds * 1000;
+      await this.ctx.storage.setAlarm(this.state.deadline);
+    }
+
+    this.state.cheapestPrices = await this.cheapestPrices(league, this.state.totalPicks);
+    await this.persist();
+    this.broadcast();
+  }
+
+  private async makePick(
+    userId: string,
+    teamKey: string,
+    options: { asCommissioner?: boolean } = {},
+  ): Promise<void> {
     if (!this.state || this.state.status !== "active") throw new Error("Draft is not running");
-    if (this.state.currentUserId !== userId) throw new Error("It's not your turn");
+    if (this.state.pausedRemainingMs !== null) {
+      throw new Error("The commissioner has paused the draft");
+    }
+    // Skipped for a commissioner pick, which has already established that `userId` is
+    // whoever is on the clock.
+    if (!options.asCommissioner && this.state.currentUserId !== userId) throw new Error("It's not your turn");
     if (this.state.picks.some((pick) => pick.teamKey === teamKey)) throw new Error("That team is already drafted");
 
     const league = await this.loadLeague();
@@ -508,8 +638,15 @@ export class DraftRoom extends DurableObject<Env> {
       await this.env.DB.prepare("UPDATE leagues SET status = 'active' WHERE id = ?").bind(league.id).run();
     } else {
       this.state.currentUserId = pickOwner(this.state.order, this.state.currentPick);
-      this.state.deadline = Date.now() + league.pick_seconds * 1000;
-      await this.ctx.storage.setAlarm(this.state.deadline);
+      if (this.state.pausedRemainingMs !== null) {
+        // Still paused: the next manager inherits a stopped clock rather than silently
+        // burning their turn while the room is frozen.
+        this.state.pausedRemainingMs = league.pick_seconds * 1000;
+        this.state.deadline = null;
+      } else {
+        this.state.deadline = Date.now() + league.pick_seconds * 1000;
+        await this.ctx.storage.setAlarm(this.state.deadline);
+      }
     }
 
     // The pool may have shrunk (a pick was made) — keep the reserve-guard prices current

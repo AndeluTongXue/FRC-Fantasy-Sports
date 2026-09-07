@@ -130,8 +130,12 @@ export interface DraftState {
   currentPick: number;
   totalPicks: number;
   currentUserId: string | null;
-  /** Epoch ms when the current pick auto-drafts, or null when the clock isn't running. */
+  /** Epoch ms when the current pick auto-drafts, or null when the clock isn't running —
+   * which includes being paused, so a paused room shows no countdown. */
   deadline: number | null;
+  /** Milliseconds that were left on the clock when the commissioner paused, or null when the
+   * draft isn't paused. Resuming gives that time back rather than restarting the pick. */
+  pausedRemainingMs: number | null;
   /** Epoch ms when the draft auto-starts, or null. Only meaningful while `status` is
    * "pending" — cleared the moment the draft actually starts. */
   scheduledDraftAt: number | null;
@@ -149,7 +153,21 @@ export interface DraftState {
   cheapestPrices: number[];
 }
 
-export type DraftClientMessage = { type: "start" } | { type: "pick"; teamKey: string };
+export type DraftClientMessage =
+  | { type: "start" }
+  | { type: "pick"; teamKey: string }
+  // Commissioner-only, for when a draft goes wrong in a way the managers can't fix
+  // themselves — a dropped connection, someone who stepped away, a misclick.
+  | { type: "pause" }
+  | { type: "resume" }
+  | { type: "extend" }
+  // Separate from "pick" rather than an override on it: a commissioner picking for the
+  // manager on the clock should have to say so, not do it by mistyping their own turn.
+  | { type: "pickFor"; teamKey: string }
+  | { type: "undo" };
+
+/** Seconds an "extend" adds to the current pick. */
+export const CLOCK_EXTENSION_SECONDS = 60;
 
 export type DraftServerMessage =
   | { type: "state"; state: DraftState }
