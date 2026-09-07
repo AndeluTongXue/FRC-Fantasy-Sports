@@ -8,9 +8,35 @@ import { minimumSalaryCap, pricingYearForLeague } from "../lib/pricing";
 import { syncAndScoreLeague } from "../lib/scores";
 import { DEFAULT_TEAM_PRICE } from "../lib/statbotics";
 import { syncEventTeams } from "../lib/sync";
+import { waitLabel } from "../lib/throttle";
 
 /** Ambiguous characters (0/O, 1/I) left out so codes survive being read aloud. */
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+const MIN_SCHEDULE_LEAD_MS = 60 * 1000;
+const MAX_SCHEDULE_LEAD_MS = 180 * 24 * 60 * 60 * 1000;
+
+type ScheduleValidation = { ok: true; value: number } | { ok: false; error: string };
+
+/** Validates a proposed draft auto-start time. Not "in the past" but "at least a minute
+ * out" — a time that's already arrived (or arrives before the request even completes)
+ * would race the DO's alarm setup for no benefit over just starting manually. */
+function validateScheduledDraftAt(value: unknown): ScheduleValidation {
+  if (value === null || value === undefined) {
+    return { ok: false, error: "scheduledDraftAt is required" };
+  }
+  const ms = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(ms)) return { ok: false, error: "scheduledDraftAt must be a timestamp in milliseconds" };
+
+  const now = Date.now();
+  if (ms < now + MIN_SCHEDULE_LEAD_MS) {
+    return { ok: false, error: "Scheduled draft time must be at least a minute from now" };
+  }
+  if (ms > now + MAX_SCHEDULE_LEAD_MS) {
+    return { ok: false, error: "Scheduled draft time can't be more than 180 days out" };
+  }
+  return { ok: true, value: Math.trunc(ms) };
+}
 
 function generateInviteCode(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(6));
@@ -38,6 +64,8 @@ interface LeagueRow {
   scoring_config: string;
   status: string;
   created_at: number;
+  last_score_sync_at: number | null;
+  scheduled_draft_at: number | null;
 }
 
 function toLeague(row: LeagueRow) {
@@ -56,6 +84,7 @@ function toLeague(row: LeagueRow) {
     scoringConfig: JSON.parse(row.scoring_config),
     status: row.status,
     createdAt: row.created_at,
+    scheduledDraftAt: row.scheduled_draft_at,
   };
 }
 
@@ -80,6 +109,13 @@ leagueRoutes.post("/", async (c) => {
   if (name.length < 3) return c.json({ error: "League name must be at least 3 characters" }, 400);
   if (leagueType === "single_event" && !eventKey) {
     return c.json({ error: "Pick an event for a single-event league" }, 400);
+  }
+
+  let scheduledDraftAt: number | null = null;
+  if (body.scheduledDraftAt !== undefined && body.scheduledDraftAt !== null) {
+    const validation = validateScheduledDraftAt(body.scheduledDraftAt);
+    if (!validation.ok) return c.json({ error: validation.error }, 400);
+    scheduledDraftAt = validation.value;
   }
 
   if (eventKey) {
@@ -112,13 +148,15 @@ leagueRoutes.post("/", async (c) => {
     scoring_config: JSON.stringify(DEFAULT_SCORING),
     status: "setup",
     created_at: Date.now(),
+    scheduled_draft_at: scheduledDraftAt,
   };
 
   await c.env.DB.batch([
     c.env.DB.prepare(
       `INSERT INTO leagues (id, name, league_type, event_key, season_year, invite_code, commissioner_id,
-                            roster_size, salary_cap, max_members, pick_seconds, scoring_config, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                            roster_size, salary_cap, max_members, pick_seconds, scoring_config, status, created_at,
+                            scheduled_draft_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       league.id,
       league.name,
@@ -134,11 +172,17 @@ leagueRoutes.post("/", async (c) => {
       league.scoring_config,
       league.status,
       league.created_at,
+      league.scheduled_draft_at,
     ),
     c.env.DB.prepare(
       "INSERT INTO league_members (league_id, user_id, roster_name, joined_at) VALUES (?, ?, ?, ?)",
     ).bind(id, user.id, `${user.displayName}'s team`, Date.now()),
   ]);
+
+  if (scheduledDraftAt !== null) {
+    const stub = c.env.DRAFT_ROOM.get(c.env.DRAFT_ROOM.idFromName(id));
+    await stub.setSchedule(id, scheduledDraftAt);
+  }
 
   return c.json({ league: toLeague(league as LeagueRow) }, 201);
 });
@@ -353,6 +397,63 @@ leagueRoutes.patch("/:id/roster-name", async (c) => {
     .run();
 
   return c.json({ rosterName });
+});
+
+/**
+ * Sets or reschedules the draft's auto-start time. Commissioner-only and pre-draft-only,
+ * like the salary cap edit — once a draft is running (or done), a start time is moot.
+ */
+leagueRoutes.put("/:id/schedule", async (c) => {
+  const leagueId = c.req.param("id");
+  const user = c.get("user");
+  const body = await c.req.json<{ scheduledDraftAt?: unknown }>();
+
+  const league = await c.env.DB.prepare("SELECT commissioner_id, status FROM leagues WHERE id = ?")
+    .bind(leagueId)
+    .first<{ commissioner_id: string; status: string }>();
+  if (!league) return c.json({ error: "League not found" }, 404);
+  if (league.commissioner_id !== user.id) {
+    return c.json({ error: "Only the commissioner can schedule the draft" }, 403);
+  }
+  if (league.status !== "setup") {
+    return c.json({ error: "The draft can't be scheduled once it has started" }, 409);
+  }
+
+  const validation = validateScheduledDraftAt(body.scheduledDraftAt);
+  if (!validation.ok) return c.json({ error: validation.error }, 400);
+
+  await c.env.DB.prepare("UPDATE leagues SET scheduled_draft_at = ? WHERE id = ?")
+    .bind(validation.value, leagueId)
+    .run();
+
+  const stub = c.env.DRAFT_ROOM.get(c.env.DRAFT_ROOM.idFromName(leagueId));
+  await stub.setSchedule(leagueId, validation.value);
+
+  return c.json({ scheduledDraftAt: validation.value });
+});
+
+/** Cancels a scheduled draft start — the draft goes back to needing a manual start. */
+leagueRoutes.delete("/:id/schedule", async (c) => {
+  const leagueId = c.req.param("id");
+  const user = c.get("user");
+
+  const league = await c.env.DB.prepare("SELECT commissioner_id, status FROM leagues WHERE id = ?")
+    .bind(leagueId)
+    .first<{ commissioner_id: string; status: string }>();
+  if (!league) return c.json({ error: "League not found" }, 404);
+  if (league.commissioner_id !== user.id) {
+    return c.json({ error: "Only the commissioner can cancel the scheduled draft" }, 403);
+  }
+  if (league.status !== "setup") {
+    return c.json({ error: "The draft schedule can't change once it has started" }, 409);
+  }
+
+  await c.env.DB.prepare("UPDATE leagues SET scheduled_draft_at = NULL WHERE id = ?").bind(leagueId).run();
+
+  const stub = c.env.DRAFT_ROOM.get(c.env.DRAFT_ROOM.idFromName(leagueId));
+  await stub.setSchedule(leagueId, null);
+
+  return c.json({ ok: true });
 });
 
 leagueRoutes.delete("/:id", async (c) => {
@@ -681,11 +782,38 @@ leagueRoutes.get("/:id/standings", async (c) => {
   });
 });
 
+/**
+ * Manual rescore. This is the one member-triggerable path that reaches TBA (a season
+ * league asks TBA for every rostered team's schedule), so it's on a cooldown — otherwise
+ * any member could spam the button and burn through our TBA rate limit. The cron rescores
+ * from cached data anyway, so the cooldown only delays a manual nudge.
+ */
+const SCORE_SYNC_COOLDOWN_MS = 5 * 60 * 1000;
+
 leagueRoutes.post("/:id/refresh-scores", async (c) => {
   const leagueId = c.req.param("id");
   if (!(await loadMembership(c.env.DB, leagueId, c.get("user").id))) {
     return c.json({ error: "You're not in this league" }, 403);
   }
+
+  const row = await c.env.DB.prepare("SELECT last_score_sync_at FROM leagues WHERE id = ?")
+    .bind(leagueId)
+    .first<{ last_score_sync_at: number | null }>();
+  if (!row) return c.json({ error: "League not found" }, 404);
+
+  const now = Date.now();
+  const elapsed = now - (row.last_score_sync_at ?? 0);
+  if (elapsed < SCORE_SYNC_COOLDOWN_MS) {
+    const retryAfter = Math.ceil((SCORE_SYNC_COOLDOWN_MS - elapsed) / 1000);
+    c.header("Retry-After", String(retryAfter));
+    return c.json(
+      { error: `Scores were just refreshed — try again in ${waitLabel(retryAfter)}.`, retryAfter },
+      429,
+    );
+  }
+
+  // Claim the window before the work starts, so two clicks racing can't both reach TBA.
+  await c.env.DB.prepare("UPDATE leagues SET last_score_sync_at = ? WHERE id = ?").bind(now, leagueId).run();
   return c.json({ scored: await syncAndScoreLeague(c.env, leagueId) });
 });
 

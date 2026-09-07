@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import type { FrcEvent } from "../../shared/types";
 import { api } from "../lib/api";
+import { useAuth } from "../lib/auth";
 
 export function Events() {
+  const { user } = useAuth();
   const [events, setEvents] = useState<FrcEvent[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -45,14 +47,16 @@ export function Events() {
           placeholder="Search events…"
           className="flex-1 rounded-md border border-edge bg-surface px-3 py-2 text-sm outline-none focus:border-sky-500 sm:max-w-xs"
         />
-        <button
-          type="button"
-          onClick={syncEvents}
-          disabled={syncing}
-          className="rounded-md border border-edge bg-surface px-3 py-2 text-sm hover:border-sky-600 hover:bg-cream disabled:opacity-50"
-        >
-          {syncing ? "Syncing…" : "Sync from TBA"}
-        </button>
+        {user?.isAdmin && (
+          <button
+            type="button"
+            onClick={syncEvents}
+            disabled={syncing}
+            className="rounded-md border border-edge bg-surface px-3 py-2 text-sm hover:border-sky-600 hover:bg-cream disabled:opacity-50"
+          >
+            {syncing ? "Syncing…" : "Sync from TBA"}
+          </button>
+        )}
       </div>
 
       {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
@@ -63,7 +67,9 @@ export function Events() {
         <div className="rounded-lg border border-edge bg-surface p-8 text-center">
           <p className="mb-2 text-slate-700">No events cached yet.</p>
           <p className="text-sm text-slate-500">
-            Hit “Sync from TBA” to pull this season's event schedule.
+            {user?.isAdmin
+              ? "Hit “Sync from TBA” to pull this season's event schedule."
+              : "An admin needs to sync this season's event schedule from The Blue Alliance."}
           </p>
         </div>
       ) : (

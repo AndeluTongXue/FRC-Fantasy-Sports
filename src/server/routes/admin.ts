@@ -1,13 +1,14 @@
 import { Hono } from "hono";
 import type { AppContext } from "../lib/context";
-import { requireAuth } from "../lib/context";
+import { requireAdmin, requireAuth } from "../lib/context";
 import { seasonYear } from "../lib/env";
 import { priceTeamsFromStatbotics } from "../lib/statbotics";
 import { syncEventResults, syncEventTeams, syncEvents, syncTeams } from "../lib/sync";
 
 export const adminRoutes = new Hono<AppContext>();
 
-adminRoutes.use("*", requireAuth);
+// Every route here spends TBA/Statbotics quota, so all of them are admin-only.
+adminRoutes.use("*", requireAuth, requireAdmin);
 
 adminRoutes.post("/sync/teams", async (c) => {
   const year = Number.parseInt(c.req.query("year") ?? "", 10) || seasonYear(c.env);

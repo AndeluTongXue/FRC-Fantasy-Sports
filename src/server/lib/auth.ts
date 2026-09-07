@@ -76,19 +76,19 @@ export async function createSession(db: D1Database, userId: string): Promise<{ t
 export async function resolveSession(db: D1Database, token: string): Promise<User | null> {
   const row = await db
     .prepare(
-      `SELECT u.id, u.email, u.display_name, s.expires_at
+      `SELECT u.id, u.email, u.display_name, u.is_admin, s.expires_at
        FROM sessions s JOIN users u ON u.id = s.user_id
        WHERE s.id = ?`,
     )
     .bind(await digestToken(token))
-    .first<{ id: string; email: string; display_name: string; expires_at: number }>();
+    .first<{ id: string; email: string; display_name: string; is_admin: number; expires_at: number }>();
 
   if (!row) return null;
   if (row.expires_at < Date.now()) {
     await destroySession(db, token);
     return null;
   }
-  return { id: row.id, email: row.email, displayName: row.display_name };
+  return { id: row.id, email: row.email, displayName: row.display_name, isAdmin: row.is_admin === 1 };
 }
 
 export async function destroySession(db: D1Database, token: string): Promise<void> {

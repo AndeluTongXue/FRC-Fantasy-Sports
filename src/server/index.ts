@@ -4,6 +4,7 @@ import type { Env } from "./lib/env";
 import { seasonYear } from "./lib/env";
 import { recomputeLeagueScores } from "./lib/scores";
 import { activeEventKeys, syncEventResults, syncEvents } from "./lib/sync";
+import { pruneLoginAttempts } from "./lib/throttle";
 import { TbaError } from "./lib/tba";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
@@ -60,6 +61,8 @@ async function scheduled(_event: ScheduledController, env: Env): Promise<void> {
   for (const league of leagues) {
     await recomputeLeagueScores(env, league.id);
   }
+
+  await pruneLoginAttempts(env.DB);
 }
 
 export default {

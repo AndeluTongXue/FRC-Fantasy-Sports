@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { earliestScheduleInputValue, formatScheduledDraft, toLocalInputValue } from "../lib/schedule";
 
 export interface LeagueDetail {
   league: {
@@ -15,6 +16,7 @@ export interface LeagueDetail {
     salaryCap: number;
     maxMembers: number;
     status: string;
+    scheduledDraftAt: number | null;
   };
   members: {
     userId: string;
@@ -59,6 +61,10 @@ export function League() {
   const [rosterNameInput, setRosterNameInput] = useState("");
   const [savingRosterName, setSavingRosterName] = useState(false);
   const [rosterNameError, setRosterNameError] = useState("");
+  const [editingSchedule, setEditingSchedule] = useState(false);
+  const [scheduleInput, setScheduleInput] = useState("");
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [scheduleError, setScheduleError] = useState("");
   const [capMinimum, setCapMinimum] = useState<{
     minimumCap: number;
     worstCaseAveragePrice: number;
@@ -165,6 +171,49 @@ export function League() {
       setRosterNameError(caught instanceof Error ? caught.message : "Could not rename team");
     } finally {
       setSavingRosterName(false);
+    }
+  }
+
+  function startEditingSchedule() {
+    setScheduleInput(league.scheduledDraftAt !== null ? toLocalInputValue(league.scheduledDraftAt) : "");
+    setScheduleError("");
+    setEditingSchedule(true);
+  }
+
+  async function saveSchedule() {
+    if (!scheduleInput) {
+      setScheduleError("Pick a date and time");
+      return;
+    }
+    const scheduledDraftAt = new Date(scheduleInput).getTime();
+    if (!Number.isFinite(scheduledDraftAt)) {
+      setScheduleError("That doesn't look like a valid date and time");
+      return;
+    }
+    setSavingSchedule(true);
+    setScheduleError("");
+    try {
+      await api.put(`/leagues/${league.id}/schedule`, { scheduledDraftAt });
+      setDetail((prev) => prev && { ...prev, league: { ...prev.league, scheduledDraftAt } });
+      setEditingSchedule(false);
+    } catch (caught) {
+      setScheduleError(caught instanceof Error ? caught.message : "Could not schedule the draft");
+    } finally {
+      setSavingSchedule(false);
+    }
+  }
+
+  async function removeSchedule() {
+    setSavingSchedule(true);
+    setScheduleError("");
+    try {
+      await api.delete(`/leagues/${league.id}/schedule`);
+      setDetail((prev) => prev && { ...prev, league: { ...prev.league, scheduledDraftAt: null } });
+      setEditingSchedule(false);
+    } catch (caught) {
+      setScheduleError(caught instanceof Error ? caught.message : "Could not cancel the schedule");
+    } finally {
+      setSavingSchedule(false);
     }
   }
 
@@ -317,6 +366,72 @@ export function League() {
           </Link>
         )}
       </div>
+
+      {league.status === "setup" && (
+        <div className="mb-6 rounded-lg border border-edge bg-surface p-4">
+          <h2 className="mb-2 text-sm font-medium text-slate-700">Draft schedule</h2>
+          {scheduleError && <p className="mb-2 text-xs text-red-600">{scheduleError}</p>}
+          {editingSchedule ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="datetime-local"
+                min={earliestScheduleInputValue()}
+                value={scheduleInput}
+                onChange={(event) => setScheduleInput(event.target.value)}
+                autoFocus
+                className="rounded-md border border-edge bg-surface-raised px-3 py-1.5 text-sm outline-none focus:border-sky-500"
+              />
+              <button
+                type="button"
+                onClick={saveSchedule}
+                disabled={savingSchedule}
+                className="rounded-md bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+              >
+                {savingSchedule ? "Saving…" : "Save"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditingSchedule(false)}
+                disabled={savingSchedule}
+                className="text-sm text-slate-500 hover:text-slate-700"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : league.scheduledDraftAt !== null ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="text-sm text-slate-700">
+                Draft starts automatically {formatScheduledDraft(league.scheduledDraftAt)}.
+              </p>
+              {isCommissioner && (
+                <div className="ml-auto flex gap-3 text-xs">
+                  <button type="button" onClick={startEditingSchedule} className="text-sky-600 hover:underline">
+                    Change
+                  </button>
+                  <button
+                    type="button"
+                    onClick={removeSchedule}
+                    disabled={savingSchedule}
+                    className="text-red-700 hover:underline disabled:opacity-50"
+                  >
+                    Cancel schedule
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : isCommissioner ? (
+            <button
+              type="button"
+              onClick={startEditingSchedule}
+              className="rounded-md border border-edge bg-surface px-3 py-1.5 text-sm hover:border-sky-600 hover:bg-cream"
+            >
+              Schedule the draft
+            </button>
+          ) : (
+            <p className="text-sm text-slate-500">The commissioner hasn't scheduled a start time yet.</p>
+          )}
+        </div>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2">
         {members.map((member) => {

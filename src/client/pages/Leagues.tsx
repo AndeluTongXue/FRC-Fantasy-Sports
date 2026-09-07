@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import type { FrcEvent } from "../../shared/types";
 import { api } from "../lib/api";
+import { earliestScheduleInputValue, formatScheduledDraft } from "../lib/schedule";
 
 interface MinimumCap {
   minimumCap: number;
@@ -21,6 +22,7 @@ interface LeagueSummary {
   rosterSize: number;
   salaryCap: number;
   memberCount: number;
+  scheduledDraftAt: number | null;
 }
 
 const statusLabels: Record<string, string> = {
@@ -45,6 +47,8 @@ export function Leagues() {
   const [salaryCap, setSalaryCap] = useState(200);
   const [inviteCode, setInviteCode] = useState("");
   const [minimumCap, setMinimumCap] = useState<MinimumCap | null>(null);
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [scheduledDraftAt, setScheduledDraftAt] = useState("");
 
   async function refresh() {
     const data = await api.get<{ leagues: LeagueSummary[] }>("/leagues");
@@ -85,6 +89,10 @@ export function Leagues() {
   async function createLeague(event: React.FormEvent) {
     event.preventDefault();
     setError("");
+    if (scheduleEnabled && !scheduledDraftAt) {
+      setError("Pick a date and time for the draft, or turn off scheduling");
+      return;
+    }
     try {
       await api.post("/leagues", {
         name,
@@ -93,9 +101,12 @@ export function Leagues() {
         rosterSize,
         maxMembers,
         salaryCap,
+        scheduledDraftAt: scheduleEnabled ? new Date(scheduledDraftAt).getTime() : undefined,
       });
       setMode("none");
       setName("");
+      setScheduleEnabled(false);
+      setScheduledDraftAt("");
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not create league");
@@ -252,6 +263,32 @@ export function Leagues() {
                 </span>
               )}
             </label>
+
+            <label className="block sm:col-span-2">
+              <span className="mb-1 flex items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={scheduleEnabled}
+                  onChange={(event) => setScheduleEnabled(event.target.checked)}
+                  className="rounded border-edge"
+                />
+                Schedule the draft
+              </span>
+              {scheduleEnabled && (
+                <input
+                  type="datetime-local"
+                  required
+                  min={earliestScheduleInputValue()}
+                  value={scheduledDraftAt}
+                  onChange={(event) => setScheduledDraftAt(event.target.value)}
+                  className="w-full rounded-md border border-edge bg-surface-raised px-3 py-2 outline-none focus:border-sky-500"
+                />
+              )}
+              <span className="mt-1 block text-xs text-slate-500">
+                The draft starts automatically at this time — you can still start it early, or change or
+                cancel this later.
+              </span>
+            </label>
           </div>
 
           <button type="submit" className="rounded-md bg-sky-600 px-4 py-2 text-sm font-medium hover:bg-sky-700">
@@ -289,6 +326,11 @@ export function Leagues() {
                 {league.rosterSize} teams · ${league.salaryCap} cap · code{" "}
                 <span className="font-mono text-slate-600">{league.inviteCode}</span>
               </p>
+              {league.status === "setup" && league.scheduledDraftAt !== null && (
+                <p className="mt-1 text-xs text-sky-700">
+                  Draft starts {formatScheduledDraft(league.scheduledDraftAt)}
+                </p>
+              )}
             </Link>
           ))}
         </div>

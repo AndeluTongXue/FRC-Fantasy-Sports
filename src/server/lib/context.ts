@@ -18,6 +18,16 @@ export const requireAuth: MiddlewareHandler<AppContext> = async (c, next) => {
   await next();
 };
 
+/**
+ * Rejects the request unless the session belongs to an admin. Must run after `requireAuth`.
+ * Admin gates the sync jobs, which spend our TBA/Statbotics API quota — being signed in is
+ * not enough to trigger those.
+ */
+export const requireAdmin: MiddlewareHandler<AppContext> = async (c, next) => {
+  if (!c.get("user").isAdmin) return c.json({ error: "Admins only" }, 403);
+  await next();
+};
+
 export function currentUser(c: Context<AppContext>): User {
   return c.get("user");
 }

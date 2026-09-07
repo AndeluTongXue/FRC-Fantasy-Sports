@@ -5,6 +5,8 @@ export interface User {
   id: string;
   email: string;
   displayName: string;
+  /** Gates `/api/admin/*` (the TBA/Statbotics sync jobs). Granted in D1, not in the app. */
+  isAdmin: boolean;
 }
 
 export interface Team {
@@ -53,6 +55,9 @@ export interface League {
   scoringConfig: ScoringConfig;
   status: LeagueStatus;
   createdAt: number;
+  /** When the draft should auto-start, or null if it must be started manually. Only
+   * meaningful pre-draft — cleared once the draft actually starts, manually or not. */
+  scheduledDraftAt: number | null;
 }
 
 export interface LeagueMember {
@@ -124,6 +129,9 @@ export interface DraftState {
   currentUserId: string | null;
   /** Epoch ms when the current pick auto-drafts, or null when the clock isn't running. */
   deadline: number | null;
+  /** Epoch ms when the draft auto-starts, or null. Only meaningful while `status` is
+   * "pending" — cleared the moment the draft actually starts. */
+  scheduledDraftAt: number | null;
   budgets: Record<string, number>;
   picks: DraftPick[];
   rosterSize: number;

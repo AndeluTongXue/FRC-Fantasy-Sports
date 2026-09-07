@@ -29,6 +29,13 @@ rare case nothing qualifies (the cheap tier got bought up before your turn), the
 skipped and that roster slot goes unfilled; the draft room shows a warning when this is
 about to happen to you.
 
+The commissioner can schedule an auto-start time for the draft — at creation, or any time
+before it actually starts, from the league page. It's backed by the same Durable Object
+alarm the pick clock uses, so it fires precisely rather than on the 10-minute cron tick;
+the commissioner can still start early regardless, which supersedes the schedule. If the
+scheduled time arrives without at least 2 owners in the league, the schedule is cancelled
+(not retried) and the draft stays in manual-start mode.
+
 **Pricing** — teams are priced from a Statbotics final EPA percentile ($5–$75), cached
 permanently in D1 (rows are keyed by the literal EPA year fetched, so multiple years can be
 cached at once without clobbering each other). Statbotics is read only by this one job — its
@@ -99,6 +106,30 @@ roster has no good outcome). A ban check is by account id, so it's a moderation 
 "this specific account is causing problems," not a hard guarantee against someone signing up
 again under a new email.
 
+## Accounts and rate limits
+
+**Admins** — `/api/admin/*` (the TBA and Statbotics sync jobs) is admin-only. Those jobs
+spend our third-party API quota, so being signed in isn't enough: an account needs
+`users.is_admin`, which is set directly in D1 and deliberately has no API or UI for
+granting it. That avoids the usual "first account to sign up becomes admin" race on a
+public deploy. The sync buttons on the Teams and Events pages only render for admins, and
+the flag is read per request, so promoting an account takes effect on the next page load
+with no re-login.
+
+**Sign-in throttling** — failed sign-ins are counted per email (10 per 15 minutes) and per
+IP (50, looser because a shared NAT legitimately produces some), and the limit is checked
+before the password hash is verified so a locked-out attacker can't keep burning CPU. A
+successful sign-in clears that email's counter — which needs the real password, so it
+can't be used to reset someone else's. Only Cloudflare's `CF-Connecting-IP` is trusted for
+the IP key; `X-Forwarded-For` is client-supplied and honouring it would let an attacker
+rotate the header to sidestep the limit. Locally there's no such header, so only the
+per-email counter applies.
+
+**Score refresh cooldown** — `POST /api/leagues/:id/refresh-scores` is the one path a
+regular member can use that reaches TBA (a season league asks TBA for every rostered
+team's schedule), so it's limited to once per 5 minutes per league. The cron rescores from
+cached data regardless, so the cooldown only delays a manual nudge.
+
 ## Local development
 
 ```bash
@@ -108,8 +139,14 @@ npm run db:migrate:local
 npm run dev
 ```
 
-Then sign up in the app and seed the data (also available as buttons on the Teams and
-Events pages):
+Then sign up in the app and grant yourself admin, so you can seed the data:
+
+```bash
+npx wrangler d1 execute frc-fantasy-db --local \
+  --command "UPDATE users SET is_admin = 1 WHERE email = 'you@example.com'"
+```
+
+Reload the app and seed (also available as buttons on the Teams and Events pages):
 
 ```bash
 curl -b cookies.txt -X POST http://localhost:5173/api/admin/sync/teams
@@ -132,6 +169,8 @@ node scripts/edit-budget-smoke.mjs   # commissioner-only, pre-draft-only salary 
 node scripts/minimum-cap-smoke.mjs   # minimum-cap math + a live adversarial draft proving the guarantee holds
 node scripts/leave-league-smoke.mjs  # leaving pre-draft, commissioner transfer, solo-member block, post-draft lock
 node scripts/ban-league-smoke.mjs    # commissioner-only ban/unban, kick + rejoin block, self-ban refused, post-draft lock
+node scripts/hardening-smoke.mjs    # admin-only sync routes, failed-sign-in lockout, refresh-scores cooldown
+node scripts/schedule-draft-smoke.mjs # scheduling at creation/after, edit/cancel, permissions, real auto-start
 ```
 
 ## Deploying to Cloudflare
@@ -143,6 +182,13 @@ npx wrangler d1 create frc-fantasy-db      # put the returned database_id in wra
 npm run db:migrate:remote
 npx wrangler secret put TBA_API_KEY
 npm run deploy
+```
+
+Then sign up on the deployed app and promote that account, so it can run the sync jobs:
+
+```bash
+npx wrangler d1 execute frc-fantasy-db --remote \
+  --command "UPDATE users SET is_admin = 1 WHERE email = 'you@example.com'"
 ```
 
 The cron trigger (every 10 minutes) refreshes the event list daily, pulls results for any

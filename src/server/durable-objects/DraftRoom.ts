@@ -85,8 +85,10 @@ export class DraftRoom extends DurableObject<Env> {
     }
   }
 
-  /** Pick clock expired — auto-draft the best team the owner can still afford. */
+  /** One alarm slot serves two purposes depending on draft status: while pending, it's the
+   * scheduled auto-start; while active, it's the current pick's clock. */
   async alarm(): Promise<void> {
+    if (this.state?.status === "pending") return this.runScheduledStart();
     if (!this.state || this.state.status !== "active") return;
 
     const onClock = this.state.currentUserId;
@@ -108,6 +110,57 @@ export class DraftRoom extends DurableObject<Env> {
     const best = await this.bestAvailable(league, maxSpend);
     if (best) await this.applyPick(league, onClock, best.teamKey, best.price);
     else await this.advance(league);
+  }
+
+  /**
+   * Sets, reschedules, or (with `null`) cancels the draft's auto-start time. Called by the
+   * `/schedule` route rather than over the draft WebSocket, since scheduling can happen
+   * before anyone has ever opened the draft room — `leagueId` mirrors what `fetch` does on
+   * first connect, so this also works as this room's very first touch.
+   */
+  async setSchedule(leagueId: string, scheduledAt: number | null): Promise<void> {
+    if (this.leagueId !== leagueId) {
+      this.leagueId = leagueId;
+      await this.ctx.storage.put("leagueId", leagueId);
+    }
+    if (!this.state) this.state = await this.buildPendingState();
+    if (this.state.status !== "pending") return; // already started or finished; nothing to (re)schedule
+
+    this.state.scheduledDraftAt = scheduledAt;
+    await this.persist();
+    if (scheduledAt !== null) await this.ctx.storage.setAlarm(scheduledAt);
+    else await this.ctx.storage.deleteAlarm();
+    this.broadcast();
+  }
+
+  /** The schedule's alarm fired. Bypasses the commissioner check `startDraft` does — the
+   * schedule itself, set earlier by the commissioner, is the authorization here. */
+  private async runScheduledStart(): Promise<void> {
+    if (!this.state || this.state.scheduledDraftAt === null) return;
+
+    let league: LeagueConfig;
+    try {
+      league = await this.loadLeague();
+    } catch {
+      // League was deleted out from under this alarm — stop retrying instead of looping.
+      await this.resetForDeletion();
+      return;
+    }
+
+    try {
+      await this.beginDraft(league);
+    } catch (error) {
+      // Most likely "Need at least 2 owners to draft" — the schedule can't be honored, so
+      // cancel it (an alarm only fires once anyway) and tell whoever's connected why.
+      console.error("Scheduled draft auto-start failed", error);
+      this.state.scheduledDraftAt = null;
+      await this.persist();
+      await this.env.DB.prepare("UPDATE leagues SET scheduled_draft_at = NULL WHERE id = ?")
+        .bind(league.id)
+        .run();
+      const message = error instanceof Error ? error.message : "Scheduled draft could not start";
+      for (const socket of this.ctx.getWebSockets()) this.sendError(socket, message);
+    }
   }
 
   private sendError(ws: WebSocket, message: string): void {
@@ -154,6 +207,7 @@ export class DraftRoom extends DurableObject<Env> {
       totalPicks: roster.length * league.roster_size,
       currentUserId: null,
       deadline: null,
+      scheduledDraftAt: null,
       budgets: Object.fromEntries(roster.map((member) => [member.user_id, league.salary_cap])),
       picks: [],
       rosterSize: league.roster_size,
@@ -246,7 +300,11 @@ export class DraftRoom extends DurableObject<Env> {
     if (userId !== league.commissioner_id) throw new Error("Only the commissioner can start the draft");
     if (this.state?.status === "active") throw new Error("Draft is already running");
     if (this.state?.status === "complete") throw new Error("Draft is already finished");
+    await this.beginDraft(league);
+  }
 
+  /** Shared by a commissioner's manual "start" and the schedule's auto-start alarm. */
+  private async beginDraft(league: LeagueConfig): Promise<void> {
     const roster = await this.members();
     if (roster.length < 2) throw new Error("Need at least 2 owners to draft");
 
@@ -263,6 +321,7 @@ export class DraftRoom extends DurableObject<Env> {
       totalPicks: order.length * league.roster_size,
       currentUserId: order[0],
       deadline: Date.now() + league.pick_seconds * 1000,
+      scheduledDraftAt: null,
       budgets: Object.fromEntries(order.map((id) => [id, league.salary_cap])),
       picks: [],
       rosterSize: league.roster_size,
@@ -276,7 +335,9 @@ export class DraftRoom extends DurableObject<Env> {
           "UPDATE league_members SET draft_position = ? WHERE league_id = ? AND user_id = ?",
         ).bind(index, league.id, id),
       ),
-      this.env.DB.prepare("UPDATE leagues SET status = 'drafting' WHERE id = ?").bind(league.id),
+      this.env.DB.prepare(
+        "UPDATE leagues SET status = 'drafting', scheduled_draft_at = NULL WHERE id = ?",
+      ).bind(league.id),
       this.env.DB.prepare("DELETE FROM draft_picks WHERE league_id = ?").bind(league.id),
     ]);
 

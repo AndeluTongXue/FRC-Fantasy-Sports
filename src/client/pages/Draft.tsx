@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useCountdown, useDraft } from "../lib/useDraft";
+import { formatDuration, formatScheduledDraft } from "../lib/schedule";
 import type { LeagueDetail } from "./League";
 
 interface PoolTeam {
@@ -21,6 +22,7 @@ export function Draft() {
   const [pool, setPool] = useState<PoolTeam[]>([]);
   const [search, setSearch] = useState("");
   const remaining = useCountdown(state?.deadline ?? null);
+  const scheduledRemaining = useCountdown(state?.scheduledDraftAt ?? null);
 
   useEffect(() => {
     api.get<LeagueDetail>(`/leagues/${leagueId}`).then(setDetail).catch(() => setDetail(null));
@@ -85,13 +87,19 @@ export function Draft() {
             {detail.members.length} of {detail.league.maxMembers} owners have joined · share code{" "}
             <span className="font-mono text-sky-600">{detail.league.inviteCode}</span>
           </p>
+          {state.scheduledDraftAt !== null && (
+            <p className="mb-4 text-sm text-sky-700">
+              Scheduled for {formatScheduledDraft(state.scheduledDraftAt)} — starting in{" "}
+              {formatDuration(scheduledRemaining ?? 0)}
+            </p>
+          )}
           {isCommissioner && (
             <button
               type="button"
               onClick={start}
               className="rounded-md bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700"
             >
-              Start draft
+              {state.scheduledDraftAt !== null ? "Start now" : "Start draft"}
             </button>
           )}
         </div>
