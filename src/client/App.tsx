@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { useAuth } from "./lib/auth";
+import { Account } from "./pages/Account";
 import { Admin } from "./pages/Admin";
 import { Draft } from "./pages/Draft";
 import { Events } from "./pages/Events";
@@ -47,6 +48,7 @@ export function App() {
         <Route path="/leagues/:leagueId/standings" element={<Standings />} />
         <Route path="/teams" element={<Teams />} />
         <Route path="/events" element={<Events />} />
+        <Route path="/account" element={<Account />} />
         {user.isAdmin && <Route path="/admin" element={<Admin />} />}
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

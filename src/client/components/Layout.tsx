@@ -107,7 +107,14 @@ export function Layout() {
             )}
           </nav>
 
-          <span className="hidden text-sm text-slate-600 sm:inline">{user?.displayName}</span>
+          <NavLink
+            to="/account"
+            className={({ isActive }) =>
+              `hidden rounded-md px-2 py-1 text-sm sm:inline ${isActive ? "bg-cream text-slate-900" : "text-slate-600 hover:text-slate-900"}`
+            }
+          >
+            {user?.displayName}
+          </NavLink>
           <button
             type="button"
             onClick={handleLogout}

@@ -163,6 +163,19 @@ authRoutes.post("/logout", async (c) => {
 
 authRoutes.get("/me", requireAuth, (c) => c.json({ user: c.get("user") }));
 
+authRoutes.patch("/display-name", requireAuth, async (c) => {
+  const user = c.get("user");
+  const body = await c.req.json<{ displayName?: string }>();
+  const displayName = body.displayName?.trim() ?? "";
+
+  if (displayName.length < 2) return c.json({ error: "Display name must be at least 2 characters" }, 400);
+  if (displayName.length > 60) return c.json({ error: "Display name must be 60 characters or fewer" }, 400);
+
+  await c.env.DB.prepare("UPDATE users SET display_name = ? WHERE id = ?").bind(displayName, user.id).run();
+
+  return c.json({ user: { ...user, displayName } });
+});
+
 /** Confirms an address from the emailed link. Signing in isn't required — these get clicked
  * from a phone that was never signed in. */
 authRoutes.post("/verify-email", async (c) => {
