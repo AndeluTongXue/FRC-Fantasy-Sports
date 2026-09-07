@@ -175,7 +175,12 @@ node scripts/schedule-draft-smoke.mjs # scheduling at creation/after, edit/cance
 
 ## Deploying to Cloudflare
 
-Durable Objects require a Workers **paid** plan (~$5/mo).
+Runs on the Workers **Free** plan — `DraftRoom` uses SQLite-backed Durable Object storage
+(`new_sqlite_classes` in `wrangler.jsonc`), which Cloudflare doesn't gate behind a paid
+plan the way the older KV-backed Durable Objects are. Free-plan caps apply (Workers
+requests/day, D1 rows read/written per day, Durable Object request and storage limits) —
+fine for a handful of leagues, but worth watching in the Cloudflare dashboard's Usage tab
+if this grows.
 
 ```bash
 npx wrangler d1 create frc-fantasy-db      # put the returned database_id in wrangler.jsonc
