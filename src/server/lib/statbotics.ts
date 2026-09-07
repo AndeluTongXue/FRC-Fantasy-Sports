@@ -14,23 +14,24 @@ interface StatboticsTeamYear {
   } | null;
 }
 
+const MIN_PRICE = 5;
+const MAX_PRICE = 75;
+
+/** <1 so the curve's slope diverges as percentile approaches 1 — most teams are priced
+ * close together and only a true handful of elite teams pull away toward MAX_PRICE. */
+const TOP_CURVE_EXPONENT = 0.4;
+
 /**
- * Percentile → price. Steep at the top so the best teams cost a real share of the cap:
- * with the default $200 cap and 6 roster slots you can afford roughly one elite team
- * plus a solid core, not two superstars.
+ * Percentile → price, continuous rather than tiered — two teams a hair apart in EPA land
+ * on different (if nearby) whole-dollar prices instead of being bucketed onto the same
+ * number. Still steep at the top so the best teams cost a real share of the cap: with the
+ * default $200 cap and 6 roster slots you can afford roughly one elite team plus a solid
+ * core, not two superstars.
  */
 function priceForPercentile(percentile: number): number {
-  if (percentile >= 0.995) return 75;
-  if (percentile >= 0.98) return 62;
-  if (percentile >= 0.95) return 52;
-  if (percentile >= 0.9) return 44;
-  if (percentile >= 0.8) return 36;
-  if (percentile >= 0.65) return 28;
-  if (percentile >= 0.5) return 22;
-  if (percentile >= 0.35) return 17;
-  if (percentile >= 0.2) return 12;
-  if (percentile >= 0.1) return 8;
-  return 5;
+  const clamped = Math.min(Math.max(percentile, 0), 1);
+  const climb = 1 - (1 - clamped) ** TOP_CURVE_EXPONENT;
+  return Math.round(MIN_PRICE + (MAX_PRICE - MIN_PRICE) * climb);
 }
 
 /** Statbotics drops requests often enough that a single 503 shouldn't fail the whole job. */
