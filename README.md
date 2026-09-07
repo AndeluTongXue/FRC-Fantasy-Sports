@@ -108,7 +108,16 @@ so it's capped the same way). The worst case for any one manager is being forced
 by others before their turn) — the minimum cap is the sum of those prices, rounded **up**
 to the nearest $5 so rounding never eats into the safety margin. This is exactly the
 guarantee the live draft room's reserve-budget rule (below) depends on to never strand a
-manager. See `minimumSalaryCap` in [`src/server/lib/pricing.ts`](src/server/lib/pricing.ts).
+manager, so it is **enforced**, not merely suggested: creating a league below it, or editing
+a cap down below it, is refused with the required figure named. Below that line the reserve
+rule refuses every team from the very first pick — the clock expires, autopick finds nothing
+(a queue is skipped the same way), the turn is skipped, and the draft ends with empty
+rosters. It bites hardest at small elite events, where there is no cheap tier at all: a
+43-team offseason field whose cheapest robot is $26 needs a far larger cap than a season
+league drawing on 3000+ teams. Where the minimum exceeds the $500 ceiling the message says
+to lower the roster size instead, since no cap can fix that, and where there's no cached
+price data to judge against the check stands down rather than blocking. See
+`minimumSalaryCap` in [`src/server/lib/pricing.ts`](src/server/lib/pricing.ts).
 
 **Scoring** — from The Blue Alliance only:
 

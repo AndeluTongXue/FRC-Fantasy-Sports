@@ -268,5 +268,56 @@ for (const ownerId of latest.order) {
 alpha.close();
 beta.close();
 
+console.log("");
+console.log("A cap below the guaranteed-safe minimum is refused outright:");
+// Below the minimum, the reserve rule refuses every team from the first pick: the clock
+// expires, autopick finds nothing, the turn is skipped, and the draft ends with empty
+// rosters. Creating that league at all is the bug this guards.
+const guardEvent = "2026casnv";
+const guardParams = new URLSearchParams({
+  leagueType: "single_event",
+  eventKey: guardEvent,
+  rosterSize: "6",
+  maxMembers: "2",
+});
+const guardMinimum = (await api(owner.cookie, `/api/leagues/minimum-cap?${guardParams}`)).body.minimumCap;
+
+const tooLow = await api(owner.cookie, "/api/leagues", {
+  method: "POST",
+  body: JSON.stringify({
+    name: `Below Minimum ${Date.now()}`,
+    leagueType: "single_event",
+    eventKey: guardEvent,
+    rosterSize: 6,
+    maxMembers: 2,
+    salaryCap: Math.max(guardMinimum - 5, 50),
+  }),
+});
+check("creating below the minimum is rejected", tooLow.status === 400, `${tooLow.status} ${tooLow.body.error ?? ""}`);
+check(
+  "and the error names the minimum",
+  String(tooLow.body.error ?? "").includes(`$${guardMinimum}`),
+  tooLow.body.error,
+);
+
+const atMinimum = await api(owner.cookie, "/api/leagues", {
+  method: "POST",
+  body: JSON.stringify({
+    name: `At Minimum ${Date.now()}`,
+    leagueType: "single_event",
+    eventKey: guardEvent,
+    rosterSize: 6,
+    maxMembers: 2,
+    salaryCap: guardMinimum,
+  }),
+});
+check("exactly the minimum is accepted", atMinimum.status === 201, `${atMinimum.status} ${atMinimum.body.error ?? ""}`);
+
+const loweredAfter = await api(owner.cookie, `/api/leagues/${atMinimum.body.league.id}`, {
+  method: "PATCH",
+  body: JSON.stringify({ salaryCap: Math.max(guardMinimum - 5, 50) }),
+});
+check("and editing it back below the minimum is refused", loweredAfter.status === 400, `${loweredAfter.status}`);
+
 console.log(failures.length ? `\n${failures.length} FAILED: ${failures.join(", ")}` : "\nAll minimum-cap checks passed.");
 process.exit(failures.length ? 1 : 0);

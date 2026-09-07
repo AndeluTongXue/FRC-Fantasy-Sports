@@ -11,6 +11,7 @@ import type { AppContext } from "../lib/context";
 import { requireAuth, requireVerifiedEmail } from "../lib/context";
 import { seasonYear } from "../lib/env";
 import { minimumSalaryCap, pricingYearForLeague } from "../lib/pricing";
+import type { MinimumCapParams } from "../lib/pricing";
 import { syncAndScoreLeague } from "../lib/scores";
 import { DEFAULT_TEAM_PRICE } from "../lib/statbotics";
 import { syncEventTeams } from "../lib/sync";
@@ -90,6 +91,11 @@ function generateInviteCode(): string {
   return Array.from(bytes, (byte) => CODE_ALPHABET[byte % CODE_ALPHABET.length]).join("");
 }
 
+/** Hard bounds on a league's salary cap. The usable floor is per-league and higher — see
+ * `salaryCapObjection`. */
+const MIN_SALARY_CAP = 50;
+const MAX_SALARY_CAP = 500;
+
 function clamp(value: unknown, min: number, max: number, fallback: number): number {
   const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
   if (!Number.isFinite(parsed)) return fallback;
@@ -146,6 +152,39 @@ export const leagueRoutes = new Hono<AppContext>();
 
 leagueRoutes.use("*", requireAuth);
 
+/**
+ * Guards the one league setting that can make a draft unplayable rather than merely awkward.
+ *
+ * Below the minimum cap, the draft room's reserve rule refuses every team from the very
+ * first pick — the manager must keep back enough to fill their remaining slots, and if the
+ * cap can't cover the worst case there is no legal pick at all. The clock then expires,
+ * autopick finds nothing, and the turn is skipped; repeat until the draft ends with empty
+ * rosters. That is what the minimum has always been the number for; nothing enforced it.
+ *
+ * Returns an error message, or null when the cap is safe (or when there's no price data to
+ * judge it against, in which case blocking would be worse than allowing).
+ */
+async function salaryCapObjection(
+  db: D1Database,
+  params: MinimumCapParams,
+  salaryCap: number,
+): Promise<string | null> {
+  const minimum = await minimumSalaryCap(db, params);
+  if (!minimum || salaryCap >= minimum.minimumCap) return null;
+
+  const where = params.league_type === "single_event" ? "at this event" : "this season";
+  const detail =
+    `A $${salaryCap} cap can't fill a ${params.roster_size}-team roster ${where}: the ` +
+    `${params.roster_size} most expensive teams a manager could be left with cost ` +
+    `$${minimum.minimumCap}.`;
+
+  // No cap can rescue this one — the ceiling is below what the roster needs.
+  if (minimum.minimumCap > MAX_SALARY_CAP) {
+    return `${detail} That's above the $${MAX_SALARY_CAP} maximum, so lower the roster size or the number of managers instead.`;
+  }
+  return `${detail} Raise the cap to at least $${minimum.minimumCap}, or lower the roster size.`;
+}
+
 leagueRoutes.post("/", requireVerifiedEmail, async (c) => {
   const user = c.get("user");
   const body = await c.req.json<Record<string, unknown>>();
@@ -179,6 +218,23 @@ leagueRoutes.post("/", requireVerifiedEmail, async (c) => {
     if (!cached?.count) await syncEventTeams(c.env, eventKey);
   }
 
+  const rosterSize = clamp(body.rosterSize, 3, 10, 6);
+  const maxMembers = clamp(body.maxMembers, 2, 16, 8);
+  const salaryCap = clamp(body.salaryCap, MIN_SALARY_CAP, MAX_SALARY_CAP, 200);
+
+  const objection = await salaryCapObjection(
+    c.env.DB,
+    {
+      league_type: leagueType,
+      event_key: eventKey,
+      season_year: seasonYear(c.env),
+      roster_size: rosterSize,
+      max_members: maxMembers,
+    },
+    salaryCap,
+  );
+  if (objection) return c.json({ error: objection }, 400);
+
   const id = crypto.randomUUID();
   const league = {
     id,
@@ -188,9 +244,9 @@ leagueRoutes.post("/", requireVerifiedEmail, async (c) => {
     season_year: seasonYear(c.env),
     invite_code: generateInviteCode(),
     commissioner_id: user.id,
-    roster_size: clamp(body.rosterSize, 3, 10, 6),
-    salary_cap: clamp(body.salaryCap, 50, 500, 200),
-    max_members: clamp(body.maxMembers, 2, 16, 8),
+    roster_size: rosterSize,
+    salary_cap: salaryCap,
+    max_members: maxMembers,
     pick_seconds: clamp(body.pickSeconds, MIN_PICK_SECONDS, MAX_PICK_SECONDS, DEFAULT_PICK_SECONDS),
     scoring_config: JSON.stringify(DEFAULT_SCORING),
     status: "setup",
@@ -420,9 +476,19 @@ leagueRoutes.patch("/:id", async (c) => {
 
   if (body.salaryCap !== undefined) {
     const salaryCap = Number(body.salaryCap);
-    if (!Number.isFinite(salaryCap) || !Number.isInteger(salaryCap) || salaryCap < 50 || salaryCap > 500) {
-      return c.json({ error: "Salary cap must be a whole number between $50 and $500" }, 400);
+    if (
+      !Number.isFinite(salaryCap) ||
+      !Number.isInteger(salaryCap) ||
+      salaryCap < MIN_SALARY_CAP ||
+      salaryCap > MAX_SALARY_CAP
+    ) {
+      return c.json(
+        { error: `Salary cap must be a whole number between $${MIN_SALARY_CAP} and $${MAX_SALARY_CAP}` },
+        400,
+      );
     }
+    const objection = await salaryCapObjection(c.env.DB, league, salaryCap);
+    if (objection) return c.json({ error: objection }, 400);
     updates.push({ column: "salary_cap", value: salaryCap });
   }
 

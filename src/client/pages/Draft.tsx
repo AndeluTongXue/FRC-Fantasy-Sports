@@ -206,8 +206,10 @@ export function Draft() {
           )}
           {stuckNoLegalPick && (
             <p className="mt-3 text-sm text-amber-700">
-              You can't afford any remaining team without leaving yourself unable to fill your other roster
-              spots — this pick will be skipped when the clock runs out.
+              You can't afford any remaining team: filling your other {mySlotsRemaining - 1} roster{" "}
+              {mySlotsRemaining - 1 === 1 ? "spot" : "spots"} needs ${reserve} held back, and you have $
+              {myBudget}. This pick will be skipped when the clock runs out — including your queue, which
+              is skipped the same way. The league's ${state.salaryCap} cap is too low for this pool.
             </p>
           )}
         </div>
