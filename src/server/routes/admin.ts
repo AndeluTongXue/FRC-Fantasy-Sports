@@ -37,3 +37,18 @@ adminRoutes.post("/sync/event/:eventKey", async (c) => {
   const results = await syncEventResults(c.env, eventKey);
   return c.json({ eventKey, teams, ...results });
 });
+
+adminRoutes.get("/users", async (c) => {
+  const { results } = await c.env.DB.prepare(
+    "SELECT id, email, display_name, is_admin, created_at FROM users ORDER BY created_at ASC",
+  ).all<{ id: string; email: string; display_name: string; is_admin: number; created_at: number }>();
+  return c.json({
+    users: results.map((row) => ({
+      id: row.id,
+      email: row.email,
+      displayName: row.display_name,
+      isAdmin: row.is_admin === 1,
+      createdAt: row.created_at,
+    })),
+  });
+});

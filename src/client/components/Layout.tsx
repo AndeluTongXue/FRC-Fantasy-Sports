@@ -46,6 +46,16 @@ export function Layout() {
             >
               Events
             </NavLink>
+            {user?.isAdmin && (
+              <NavLink
+                to="/admin"
+                className={({ isActive }) =>
+                  `${linkBase} ${isActive ? "bg-cream text-slate-900" : "text-slate-600 hover:text-slate-900"}`
+                }
+              >
+                Admin
+              </NavLink>
+            )}
           </nav>
 
           <span className="hidden text-sm text-slate-600 sm:inline">{user?.displayName}</span>
