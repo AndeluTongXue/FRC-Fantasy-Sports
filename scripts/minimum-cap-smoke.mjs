@@ -1,11 +1,22 @@
 /**
  * Verifies the minimum-salary-cap guarantee: it's the smallest cap that provably lets
- * every manager fill their roster no matter how the draft unfolds. Checks the math
- * (worst-case sum of the priciest teams in the relevant pool), the season-long pool
- * being bounded rather than averaging 3000+ teams, the insufficient-pool warning, and
- * — the real proof — that a live draft actually completes with full rosters for
- * everyone when every owner's cap is set to exactly this minimum and picks adversarially
- * (always taking the most expensive affordable team, to stress-test the guarantee).
+ * every manager fill their roster no matter how the draft unfolds.
+ *
+ * The worst case for one manager is NOT the globally priciest teams — the other
+ * (maxMembers - 1) managers can only ever hoard away (maxMembers - 1) * rosterSize teams
+ * between them, and a manager always drafts the cheapest team still on the board. So the
+ * true worst case is: opponents grab the `otherCapacity` cheapest teams first, and this
+ * manager is left to fill their roster from the cheapest `rosterSize` teams that remain
+ * after that (the price-ascending slice starting right after `otherCapacity`), not the top
+ * `rosterSize` most expensive teams overall.
+ *
+ * Checks the math against that formula (both in a pool with slack and in an insufficient
+ * pool, where it correctly collapses to the old "top rosterSize overall" bound), the
+ * season-long pool being bounded rather than averaging 3000+ teams, the insufficient-pool
+ * warning, and — the real proof — that a live draft actually completes with full rosters
+ * for everyone when every owner's cap is set to exactly this minimum and each owner spends
+ * as aggressively as the live reserve-budget rule ever allows (the exact worst-case
+ * pressure the guarantee is supposed to withstand).
  *
  * Usage: node scripts/minimum-cap-smoke.mjs [baseUrl]
  */
@@ -57,33 +68,40 @@ const singleEvent = await api(
 check("returns a minimum", singleEvent.status === 200, JSON.stringify(singleEvent.body));
 
 const pool = await api(owner.cookie, "/api/teams?eventKey=2026casnv&limit=100");
-const prices = pool.body.teams.map((t) => t.price).sort((a, b) => b - a);
-const expectedWorstCase = prices.slice(0, 4).reduce((sum, p) => sum + p, 0);
+const pricesAsc = pool.body.teams.map((t) => t.price).sort((a, b) => a - b);
+// rosterSize=4, maxMembers=8 => the other 7 managers can hoard at most 28 teams between
+// them; this manager's worst case is the cheapest 4 teams left after that.
+const otherCapacity = 7 * 4;
+const offset = Math.min(otherCapacity, pricesAsc.length - 4);
+const expectedWorstCase = pricesAsc.slice(offset, offset + 4).reduce((sum, p) => sum + p, 0);
 const expectedMinimum = Math.ceil(expectedWorstCase / 5) * 5;
 check(
-  "minimum = sum of the 4 priciest teams at the event, rounded up to $5",
+  "minimum = sum of the 4 cheapest teams left after opponents hoard 28, rounded up to $5",
   singleEvent.body.minimumCap === expectedMinimum,
   `${singleEvent.body.minimumCap} vs expected ${expectedMinimum}`,
 );
 check(
-  "poolSize is capped at maxMembers*rosterSize=32, not the full 37-team roster",
-  singleEvent.body.poolSize === 32,
-  singleEvent.body.poolSize,
+  "worstCaseOpponentPicks is (maxMembers-1)*rosterSize=28, not the full 37-team roster",
+  singleEvent.body.worstCaseOpponentPicks === 28,
+  singleEvent.body.worstCaseOpponentPicks,
 );
 check("universeSize reports the event's actual full roster", singleEvent.body.universeSize === pool.body.teams.length);
 check("not flagged insufficient (32 needed fits in this ~37-team event)", singleEvent.body.insufficientPool === false);
 
-console.log("\nSeason-long league (must NOT average 3000+ teams):");
+console.log("\nSeason-long league (must NOT price off the top of a 3000+ team pool):");
 const season = await api(owner.cookie, "/api/leagues/minimum-cap?leagueType=season&rosterSize=6&maxMembers=8");
 check("returns a minimum", season.status === 200, JSON.stringify(season.body));
 check(
-  "pool bounded to maxMembers*rosterSize=48, not thousands",
-  season.body.poolSize <= 48,
-  season.body.poolSize,
+  "worstCaseOpponentPicks is (maxMembers-1)*rosterSize=42, not the full 3000+ pool",
+  season.body.worstCaseOpponentPicks === 42,
+  season.body.worstCaseOpponentPicks,
 );
 check(
-  "season minimum is meaningfully large (worst case draws from elite teams, not the whole 3000+ pool)",
-  season.body.minimumCap > 200,
+  // With ~3690 teams to choose from, opponents hoarding the cheapest 42 barely dents the
+  // pool — this manager's worst case still lands among cheap, not elite, teams. Guards
+  // against the old bug, which priced this off the 6 most expensive teams in all of FRC.
+  "season minimum is modest — worst case lands near the cheap end of the pool, not the elite end",
+  season.body.minimumCap > 0 && season.body.minimumCap < 200,
   season.body.minimumCap,
 );
 
@@ -96,6 +114,16 @@ check(
   "flags insufficient when maxMembers*rosterSize exceeds the event's teams",
   tooManyManagers.body.insufficientPool === true,
   JSON.stringify(tooManyManagers.body),
+);
+// Not enough teams for every manager to fill a roster at all, let alone leave slack —
+// the worst case here correctly collapses to the old "top rosterSize overall" bound.
+const pricesDesc = pool.body.teams.map((t) => t.price).sort((a, b) => b - a);
+const expectedInsufficientWorstCase = pricesDesc.slice(0, 10).reduce((sum, p) => sum + p, 0);
+const expectedInsufficientMinimum = Math.ceil(expectedInsufficientWorstCase / 5) * 5;
+check(
+  "insufficient-pool minimum collapses to the sum of the 10 priciest teams at the event",
+  tooManyManagers.body.minimumCap === expectedInsufficientMinimum,
+  `${tooManyManagers.body.minimumCap} vs expected ${expectedInsufficientMinimum}`,
 );
 
 console.log("\nThe real proof — a live draft at exactly the minimum cap, picked adversarially:");
@@ -120,6 +148,29 @@ const { league } = await api(owner.cookie, "/api/leagues", {
   }),
 }).then((r) => r.body);
 await api(rival.cookie, "/api/leagues/join", { method: "POST", body: JSON.stringify({ inviteCode: league.inviteCode }) });
+
+/** Mirrors DraftRoom's othersPicksBeforeMyLast / shared/types.ts pickOwner exactly. */
+function pickOwner(order, pickIndex) {
+  if (order.length === 0) return null;
+  const round = Math.floor(pickIndex / order.length);
+  const slot = pickIndex % order.length;
+  return order[round % 2 === 0 ? slot : order.length - 1 - slot];
+}
+
+function othersPicksBeforeMyLast(state, userId, slotsAfterPick) {
+  if (slotsAfterPick <= 0) return 0;
+  let mine = 0;
+  let others = 0;
+  for (let index = state.currentPick + 1; index < state.totalPicks; index++) {
+    if (pickOwner(state.order, index) === userId) {
+      mine++;
+      if (mine >= slotsAfterPick) break;
+    } else {
+      others++;
+    }
+  }
+  return others;
+}
 
 function connect(leagueId, cookie) {
   const socket = new WebSocket(`${BASE.replace("http", "ws")}/api/leagues/${leagueId}/draft/ws`, {
@@ -168,17 +219,33 @@ let anyRejected = false;
 while (latest.status === "active" && picksAttempted < 20) {
   picksAttempted++;
   const available = (await api(owner.cookie, `/api/leagues/${league.id}/pool?limit=100`)).body.teams;
-  // Adversarial: always grab the single MOST expensive team still affordable, to burn
-  // through budget as aggressively as the reserve rule allows — the exact worst case the
-  // minimum cap is supposed to guard against.
+  // Adversarial: spend as aggressively as the live reserve-budget rule ever allows (the
+  // same maxSpend the real draft UI computes), always grabbing the priciest team within
+  // that — the exact worst-case pressure the minimum cap is supposed to withstand. Ignoring
+  // the reserve floor here would make this a stress test of nothing: the whole point of a
+  // *minimum* cap is that it has zero slack for spending that disrespects the reserve rule.
   const budget = latest.budgets[latest.currentUserId];
-  const affordable = available.filter((t) => t.price <= budget).sort((a, b) => b.price - a.price);
-  const choice = affordable[0] ?? available.at(-1);
-  sockets[latest.currentUserId].send({ type: "pick", teamKey: choice.teamKey });
-  const [a, b] = await Promise.all([alpha.next(), beta.next()]);
-  const msg = a.type === "state" ? a : b;
-  if (msg.type === "error") anyRejected = true;
-  latest = msg.state ?? latest;
+  const slotsRemaining = latest.rosterSize - latest.picks.filter((p) => p.userId === latest.currentUserId).length;
+  const slotsAfterPick = Math.max(slotsRemaining - 1, 0);
+  const otherCapacity = othersPicksBeforeMyLast(latest, latest.currentUserId, slotsAfterPick);
+  const reserve = latest.cheapestPrices
+    .slice(otherCapacity, otherCapacity + slotsAfterPick)
+    .reduce((sum, p) => sum + p, 0);
+  const maxSpend = budget - reserve;
+  const affordable = available.filter((t) => t.price <= maxSpend).sort((a, b) => b.price - a.price);
+  const cheapest = available.slice().sort((a, b) => a.price - b.price)[0];
+  const choice = affordable[0] ?? cheapest;
+
+  const picker = sockets[latest.currentUserId];
+  const other = picker === alpha ? beta : alpha;
+  picker.send({ type: "pick", teamKey: choice.teamKey });
+  const pickerMsg = await picker.next();
+  if (pickerMsg.type === "error") {
+    anyRejected = true;
+    break; // would otherwise hang forever waiting on `other`, which never hears about a rejected pick
+  }
+  await other.next();
+  latest = pickerMsg.state;
 }
 
 check("no pick was ever rejected under adversarial play", !anyRejected);

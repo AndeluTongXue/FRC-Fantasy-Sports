@@ -7,7 +7,7 @@ import { earliestScheduleInputValue, formatScheduledDraft } from "../lib/schedul
 interface MinimumCap {
   minimumCap: number;
   worstCaseAveragePrice: number;
-  poolSize: number;
+  worstCaseOpponentPicks: number;
   universeSize: number;
   insufficientPool: boolean;
 }
@@ -245,8 +245,8 @@ export function Leagues() {
               {minimumCap && (
                 <span className="mt-1 block text-xs text-slate-500">
                   Minimum: ${minimumCap.minimumCap} — the smallest cap that guarantees every manager can
-                  still fill their roster, worst case (based on the {minimumCap.poolSize}{" "}
-                  {leagueType === "season" ? "top-priced" : "priciest"} teams in the pool){" "}
+                  still fill their roster, worst case if opponents draft the {minimumCap.worstCaseOpponentPicks}{" "}
+                  cheapest teams before you do{" "}
                   <button
                     type="button"
                     onClick={() => setSalaryCap(minimumCap.minimumCap)}

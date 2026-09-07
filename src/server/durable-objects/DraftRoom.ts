@@ -104,8 +104,7 @@ export class DraftRoom extends DurableObject<Env> {
     }
     const budget = this.state.budgets[onClock] ?? 0;
     const slotsAfterPick = this.slotsRemaining(onClock) - 1;
-    const floor = await this.cheapestAvailable(league);
-    const maxSpend = budget - slotsAfterPick * floor;
+    const maxSpend = budget - (await this.reserveCost(league, onClock, slotsAfterPick));
 
     const best = await this.bestAvailable(league, maxSpend);
     if (best) await this.applyPick(league, onClock, best.teamKey, best.price);
@@ -212,7 +211,7 @@ export class DraftRoom extends DurableObject<Env> {
       picks: [],
       rosterSize: league.roster_size,
       salaryCap: league.salary_cap,
-      cheapestAvailable: await this.cheapestAvailable(league),
+      cheapestPrices: await this.cheapestPrices(league, roster.length * league.roster_size),
     };
   }
 
@@ -239,19 +238,56 @@ export class DraftRoom extends DurableObject<Env> {
     return { clause: `t.team_key NOT IN (${keys.map(() => "?").join(",")})`, bindings: keys };
   }
 
-  private async cheapestAvailable(league: LeagueConfig): Promise<number> {
+  /** Ascending prices of the `limit` cheapest still-undrafted teams. */
+  private async cheapestPrices(league: LeagueConfig, limit: number): Promise<number[]> {
     const pool = this.poolFilter(league);
     const taken = this.takenPlaceholders();
     const pricingYear = await pricingYearForLeague(this.env.DB, league);
-    const row = await this.env.DB.prepare(
-      `SELECT MIN(COALESCE(p.price, ?)) AS min_price
+    const { results } = await this.env.DB.prepare(
+      `SELECT COALESCE(p.price, ?) AS price
        FROM teams t
        LEFT JOIN team_prices p ON p.team_key = t.team_key AND p.season_year = ?
-       WHERE ${pool.clause} AND ${taken.clause}`,
+       WHERE ${pool.clause} AND ${taken.clause}
+       ORDER BY price ASC
+       LIMIT ?`,
     )
-      .bind(DEFAULT_TEAM_PRICE, pricingYear, ...pool.bindings, ...taken.bindings)
-      .first<{ min_price: number | null }>();
-    return row?.min_price ?? DEFAULT_TEAM_PRICE;
+      .bind(DEFAULT_TEAM_PRICE, pricingYear, ...pool.bindings, ...taken.bindings, Math.max(limit, 0))
+      .all<{ price: number }>();
+    return results.map((row) => row.price);
+  }
+
+  /** Exactly how many of the OTHER managers' picks will land between now and this manager's
+   * own final remaining pick, given the fixed snake order — the real number of chances
+   * opponents get to hoard cheaper teams away before this manager's remaining slots are all
+   * filled (as opposed to their *entire* remaining capacity, most of which lands too late to
+   * threaten this manager once their own roster is already full). */
+  private othersPicksBeforeMyLast(userId: string, slotsAfterPick: number): number {
+    if (!this.state || slotsAfterPick <= 0) return 0;
+    let mine = 0;
+    let others = 0;
+    for (let index = this.state.currentPick + 1; index < this.state.totalPicks; index++) {
+      if (pickOwner(this.state.order, index) === userId) {
+        mine++;
+        if (mine >= slotsAfterPick) break;
+      } else {
+        others++;
+      }
+    }
+    return others;
+  }
+
+  /** The true cost floor for filling `slotsAfterPick` remaining roster slots: the price-
+   * ascending slice starting right after the teams opponents could hoard away first —
+   * mirroring minimumSalaryCap's own worst-case reasoning (see pricing.ts), but against the
+   * live remaining turn order rather than the league's original max capacity. NOT
+   * `slotsAfterPick` copies of the single cheapest price, which understates the cost
+   * whenever more than one slot remains and fewer than that many teams share the floor
+   * price. */
+  private async reserveCost(league: LeagueConfig, userId: string, slotsAfterPick: number): Promise<number> {
+    if (slotsAfterPick <= 0) return 0;
+    const otherCapacity = this.othersPicksBeforeMyLast(userId, slotsAfterPick);
+    const prices = await this.cheapestPrices(league, otherCapacity + slotsAfterPick);
+    return prices.slice(otherCapacity).reduce((sum, price) => sum + price, 0);
   }
 
   private async bestAvailable(
@@ -326,7 +362,7 @@ export class DraftRoom extends DurableObject<Env> {
       picks: [],
       rosterSize: league.roster_size,
       salaryCap: league.salary_cap,
-      cheapestAvailable: await this.cheapestAvailable(league),
+      cheapestPrices: await this.cheapestPrices(league, order.length * league.roster_size),
     };
 
     await this.env.DB.batch([
@@ -359,9 +395,9 @@ export class DraftRoom extends DurableObject<Env> {
     if (price > budget) throw new Error(`You only have $${budget} left`);
 
     const slotsAfterPick = this.slotsRemaining(userId) - 1;
-    const floor = await this.cheapestAvailable(league);
-    if (budget - price < slotsAfterPick * floor) {
-      throw new Error(`Too expensive — you must leave at least $${slotsAfterPick * floor} to fill your roster`);
+    const reserve = await this.reserveCost(league, userId, slotsAfterPick);
+    if (budget - price < reserve) {
+      throw new Error(`Too expensive — you must leave at least $${reserve} to fill your roster`);
     }
 
     await this.applyPick(league, userId, teamKey, price);
@@ -406,9 +442,9 @@ export class DraftRoom extends DurableObject<Env> {
       await this.ctx.storage.setAlarm(this.state.deadline);
     }
 
-    // The pool may have shrunk (a pick was made) — keep the reserve-guard floor current
+    // The pool may have shrunk (a pick was made) — keep the reserve-guard prices current
     // so clients can accurately predict which picks would be rejected.
-    this.state.cheapestAvailable = await this.cheapestAvailable(league);
+    this.state.cheapestPrices = await this.cheapestPrices(league, this.state.totalPicks);
 
     await this.persist();
     this.broadcast();

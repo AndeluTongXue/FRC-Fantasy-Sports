@@ -41,8 +41,9 @@ export interface MinimumCap {
   minimumCap: number;
   /** minimumCap / rosterSize, for a "per-team" figure to display alongside it. */
   worstCaseAveragePrice: number;
-  /** How many teams the worst-case calculation actually drew from (≤ maxMembers × rosterSize). */
-  poolSize: number;
+  /** How many cheaper teams the worst case assumes opponents hoard before this manager's
+   * own picks land (≤ (maxMembers - 1) × rosterSize). */
+  worstCaseOpponentPicks: number;
   /** Total teams in the relevant universe (event roster, or all cached teams for the year). */
   universeSize: number;
   /** True if there aren't even enough teams for every manager to fill a full roster —
@@ -55,20 +56,27 @@ export interface MinimumCap {
  * manager can be left unable to afford a full roster.
  *
  * Ownership is exclusive, so across the whole league at most (maxMembers × rosterSize)
- * teams ever get drafted — the "relevant pool." The worst realistic case for any one
- * manager is being forced into the rosterSize *most expensive* teams within that pool
- * (e.g. if the cheaper tier gets bought up by others before their turn). A cap at or above
- * the sum of those prices means that worst case is always affordable, which is exactly the
- * guarantee the live draft room's reserve-budget rule depends on to never strand a manager
- * (see DraftRoom's cheapestAvailable/reserve check). Rounded *up* to the nearest $5 so
- * rounding can never eat into the safety margin.
+ * teams ever get drafted. The adversarial case for any one manager isn't the globally
+ * priciest teams — the other (maxMembers - 1) managers can only ever hoard away at most
+ * (maxMembers - 1) × rosterSize teams between them, and a self-interested manager always
+ * drafts the *cheapest* team still available on their turn. So the worst case is: opponents
+ * grab the cheapest `otherCapacity` teams in the whole pool first, and this manager is left
+ * to fill their roster from the cheapest `rosterSize` teams that remain *after* that — i.e.
+ * the price-ascending slice starting right after `otherCapacity` teams, not the top
+ * `rosterSize` most expensive teams overall (those can always be avoided whenever the pool
+ * is bigger than what the league will ever actually draft). A cap at or above the sum of
+ * that slice means that worst case is always affordable, which is exactly the guarantee the
+ * live draft room's reserve-budget rule depends on to never strand a manager (see
+ * DraftRoom's cheapestPrices/reserveCost check). Rounded *up* to the nearest $5 so rounding
+ * can never eat into the safety margin.
  */
 export async function minimumSalaryCap(db: D1Database, params: MinimumCapParams): Promise<MinimumCap | null> {
   const pricingYear = await pricingYearForLeague(db, params);
   const totalNeeded = Math.max(params.max_members * params.roster_size, 1);
+  const otherCapacity = Math.max(totalNeeded - params.roster_size, 0);
 
   let universeSize: number;
-  let topPrices: number[];
+  let worstCasePrices: number[];
 
   if (params.league_type === "single_event" && params.event_key) {
     const countRow = await db
@@ -78,18 +86,19 @@ export async function minimumSalaryCap(db: D1Database, params: MinimumCapParams)
     universeSize = countRow?.n ?? 0;
     if (universeSize === 0) return null;
 
+    const offset = Math.max(0, Math.min(otherCapacity, universeSize - params.roster_size));
     const { results } = await db
       .prepare(
         `SELECT COALESCE(p.price, ?) AS price
          FROM event_teams et
          LEFT JOIN team_prices p ON p.team_key = et.team_key AND p.season_year = ?
          WHERE et.event_key = ?
-         ORDER BY price DESC
-         LIMIT ?`,
+         ORDER BY price ASC
+         LIMIT ? OFFSET ?`,
       )
-      .bind(DEFAULT_TEAM_PRICE, pricingYear, params.event_key, Math.min(totalNeeded, universeSize))
+      .bind(DEFAULT_TEAM_PRICE, pricingYear, params.event_key, params.roster_size, offset)
       .all<{ price: number }>();
-    topPrices = results.map((row) => row.price);
+    worstCasePrices = results.map((row) => row.price);
   } else {
     const countRow = await db
       .prepare("SELECT COUNT(*) AS n FROM team_prices WHERE season_year = ?")
@@ -98,23 +107,23 @@ export async function minimumSalaryCap(db: D1Database, params: MinimumCapParams)
     universeSize = countRow?.n ?? 0;
     if (universeSize === 0) return null;
 
+    const offset = Math.max(0, Math.min(otherCapacity, universeSize - params.roster_size));
     const { results } = await db
-      .prepare("SELECT price FROM team_prices WHERE season_year = ? ORDER BY price DESC LIMIT ?")
-      .bind(pricingYear, Math.min(totalNeeded, universeSize))
+      .prepare("SELECT price FROM team_prices WHERE season_year = ? ORDER BY price ASC LIMIT ? OFFSET ?")
+      .bind(pricingYear, params.roster_size, offset)
       .all<{ price: number }>();
-    topPrices = results.map((row) => row.price);
+    worstCasePrices = results.map((row) => row.price);
   }
 
-  if (topPrices.length === 0) return null;
+  if (worstCasePrices.length === 0) return null;
 
-  const worstCaseRoster = topPrices.slice(0, Math.min(params.roster_size, topPrices.length));
-  const rawMinimum = worstCaseRoster.reduce((sum, price) => sum + price, 0);
+  const rawMinimum = worstCasePrices.reduce((sum, price) => sum + price, 0);
   const minimumCap = Math.ceil(rawMinimum / 5) * 5;
 
   return {
     minimumCap,
     worstCaseAveragePrice: Math.round((minimumCap / params.roster_size) * 10) / 10,
-    poolSize: topPrices.length,
+    worstCaseOpponentPicks: Math.min(otherCapacity, Math.max(universeSize - params.roster_size, 0)),
     universeSize,
     insufficientPool: universeSize < totalNeeded,
   };

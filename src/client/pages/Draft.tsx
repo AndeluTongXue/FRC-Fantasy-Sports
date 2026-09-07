@@ -4,6 +4,8 @@ import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useCountdown, useDraft } from "../lib/useDraft";
 import { formatDuration, formatScheduledDraft } from "../lib/schedule";
+import { pickOwner } from "../../shared/types";
+import type { DraftState } from "../../shared/types";
 import type { LeagueDetail } from "./League";
 
 interface PoolTeam {
@@ -12,6 +14,25 @@ interface PoolTeam {
   nickname: string | null;
   price: number;
   epa: number | null;
+}
+
+/** Exactly how many of the OTHER managers' picks will land between now and this manager's
+ * own final remaining pick, given the fixed snake order — mirrors DraftRoom's
+ * othersPicksBeforeMyLast exactly, using the same pickOwner the server uses to advance
+ * turns, so the client can predict a pick's legality without duplicating server state. */
+function othersPicksBeforeMyLast(state: DraftState, userId: string, slotsAfterPick: number): number {
+  if (slotsAfterPick <= 0) return 0;
+  let mine = 0;
+  let others = 0;
+  for (let index = state.currentPick + 1; index < state.totalPicks; index++) {
+    if (pickOwner(state.order, index) === userId) {
+      mine++;
+      if (mine >= slotsAfterPick) break;
+    } else {
+      others++;
+    }
+  }
+  return others;
 }
 
 export function Draft() {
@@ -49,13 +70,21 @@ export function Draft() {
   const round = Math.floor(state.currentPick / Math.max(state.order.length, 1)) + 1;
 
   // Mirrors the server's reserve-budget guard exactly: a pick is only legal if enough
-  // budget is left afterward to still afford the cheapest remaining team for every other
-  // slot. Using the same `cheapestAvailable` floor the server broadcasts keeps this in
-  // sync without duplicating its SQL.
+  // budget is left afterward to still afford the teams opponents will leave behind for each
+  // remaining slot. That's the price-ascending slice starting right after however many
+  // opponent picks land before this manager's own roster is full — not `slots * cheapest`,
+  // which both overstates what's affordable (each team sells once) and ignores that
+  // opponents get chances to hoard cheap teams in between this manager's own turns.
   const mySlotsRemaining = state.rosterSize - state.picks.filter((entry) => entry.userId === user?.id).length;
-  const maxSpend = myBudget - Math.max(mySlotsRemaining - 1, 0) * state.cheapestAvailable;
+  const slotsAfterPick = Math.max(mySlotsRemaining - 1, 0);
+  const otherCapacity = user ? othersPicksBeforeMyLast(state, user.id, slotsAfterPick) : 0;
+  const reserve = state.cheapestPrices
+    .slice(otherCapacity, otherCapacity + slotsAfterPick)
+    .reduce((sum, price) => sum + price, 0);
+  const maxSpend = myBudget - reserve;
+  const cheapestAvailable = state.cheapestPrices[0] ?? Infinity;
   const stuckNoLegalPick =
-    myTurn && state.status === "active" && mySlotsRemaining > 0 && maxSpend < state.cheapestAvailable;
+    myTurn && state.status === "active" && mySlotsRemaining > 0 && maxSpend < cheapestAvailable;
 
   return (
     <div>

@@ -136,9 +136,14 @@ export interface DraftState {
   picks: DraftPick[];
   rosterSize: number;
   salaryCap: number;
-  /** Cheapest price among undrafted pool teams right now — the same "floor" the server
-   * uses for its reserve-budget guard, so clients can predict a pick's legality exactly. */
-  cheapestAvailable: number;
+  /** Ascending prices of the cheapest undrafted pool teams right now (enough of them to
+   * cover any manager's reserve calculation — up to `totalPicks`). A manager with
+   * `slotsAfterPick` slots left after their next pick should reserve the sum of the slice
+   * starting right after the number of opponent picks that will land before their own
+   * remaining slots are filled (see DraftRoom's reserveCost/othersPicksBeforeMyLast) — NOT
+   * `slotsAfterPick` copies of the single cheapest price, which understates the cost
+   * whenever more than one slot remains. */
+  cheapestPrices: number[];
 }
 
 export type DraftClientMessage = { type: "start" } | { type: "pick"; teamKey: string };
