@@ -36,11 +36,16 @@ the commissioner can still start early regardless, which supersedes the schedule
 scheduled time arrives without at least 2 owners in the league, the schedule is cancelled
 (not retried) and the draft stays in manual-start mode.
 
-**Pricing** — teams are priced from a Statbotics final EPA percentile ($5–$75), cached
-permanently in D1 (rows are keyed by the literal EPA year fetched, so multiple years can be
-cached at once without clobbering each other). Statbotics is read only by this one job — its
-frequent outages never affect a draft or in-season scoring — and teams with no cached EPA
-(rookies) fall back to $10.
+**Pricing** — teams are priced from a Statbotics final EPA percentile on a continuous
+curve ($5–$75: `price = 5 + 70 × (1 − (1 − percentile)^0.4)`, rounded to the nearest
+dollar), so two teams a hair apart in EPA land on distinct — if close — prices instead of
+being bucketed onto the same number. Still steep at the top: only a true handful of elite
+teams pull away toward $75. See `priceForPercentile` in
+[`src/server/lib/statbotics.ts`](src/server/lib/statbotics.ts). Prices are cached
+permanently in D1 (rows are keyed by the literal EPA year fetched, so multiple years can
+be cached at once without clobbering each other). Statbotics is read only by this one
+job — its frequent outages never affect a draft or in-season scoring — and teams with no
+cached EPA (rookies) fall back to $10.
 
 Which year a league prices from depends on the *season* it drafts for, not the calendar
 year: a league drafting for a season still in progress uses last year's final EPA, since
@@ -48,8 +53,10 @@ this year's isn't complete yet. The one exception is a single-event league tied 
 **Offseason** event (Chezy Champs, IRI, etc.) — those happen after the season has fully
 concluded, so that season's own EPA is both final and far more current than reaching back
 a year. See `pricingYearForLeague` in [`src/server/lib/pricing.ts`](src/server/lib/pricing.ts).
-The admin pricing endpoint (`POST /api/admin/price-teams?year=`) defaults to last year;
-pass the current season explicitly once it's over to price offseason-event leagues from it.
+The "Re-price from Statbotics" button on the Teams page (admin-only) defaults to last
+year; enter the current season in its year field once it's over to price offseason-event
+leagues from it instead — same thing as `POST /api/admin/price-teams?year=`, which it
+calls.
 
 **Minimum cap** — league creation (and the pre-draft budget editor) suggest a starting
 salary cap: the smallest cap that's *guaranteed* safe, no matter how the draft unfolds.
@@ -112,9 +119,9 @@ again under a new email.
 spend our third-party API quota, so being signed in isn't enough: an account needs
 `users.is_admin`, which is set directly in D1 and deliberately has no API or UI for
 granting it. That avoids the usual "first account to sign up becomes admin" race on a
-public deploy. The sync buttons on the Teams and Events pages only render for admins, and
-the flag is read per request, so promoting an account takes effect on the next page load
-with no re-login.
+public deploy. The admin-only buttons on the Teams and Events pages (syncing, re-pricing)
+only render for admins, and the flag is read per request, so promoting an account takes
+effect on the next page load with no re-login.
 
 **Sign-in throttling** — failed sign-ins are counted per email (10 per 15 minutes) and per
 IP (50, looser because a shared NAT legitimately produces some), and the limit is checked
@@ -146,7 +153,8 @@ npx wrangler d1 execute frc-fantasy-db --local \
   --command "UPDATE users SET is_admin = 1 WHERE email = 'you@example.com'"
 ```
 
-Reload the app and seed (also available as buttons on the Teams and Events pages):
+Reload the app and seed — each of these is also a button on the Teams or Events page for
+an admin account ("Sync from TBA" on both; "Re-price from Statbotics" on Teams only):
 
 ```bash
 curl -b cookies.txt -X POST http://localhost:5173/api/admin/sync/teams
@@ -159,7 +167,7 @@ season before it.
 
 ## Tests
 
-Both scripts drive the real API and WebSocket draft against a running dev server:
+These scripts drive the real API and WebSocket draft against a running dev server:
 
 ```bash
 node scripts/draft-smoke.mjs         # turn order, budget guards, snake reversal, completion
