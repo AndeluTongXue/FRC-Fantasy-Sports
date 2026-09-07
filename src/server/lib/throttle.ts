@@ -1,4 +1,14 @@
-/** Fixed window: the counter resets WINDOW_MS after the first failure in a run. */
+/**
+ * A shared fixed-window counter, keyed by an arbitrary string. Fixed window: the counter
+ * resets WINDOW_MS after the first hit in a run.
+ *
+ * Two things ride on it — failed sign-ins (below) and outbound account email, which is
+ * rate limited for a different reason: those routes make us send mail to an address the
+ * caller typed, so an unlimited one is a way to use us to spam a stranger.
+ *
+ * Both live in the `login_attempts` table, which predates the second use — the key prefix
+ * is what separates them.
+ */
 const WINDOW_MS = 15 * 60 * 1000;
 
 /** Guards one account against password guessing. */
@@ -7,6 +17,11 @@ const MAX_FAILURES_PER_EMAIL = 10;
 /** Guards the whole app against one host spraying many accounts. Deliberately looser —
  * a shared NAT can legitimately produce several bad passwords in a window. */
 const MAX_FAILURES_PER_IP = 50;
+
+/** Enough for "it didn't arrive, send it again" a few times over; not enough to bury
+ * someone's inbox. */
+const MAX_EMAILS_PER_ADDRESS = 5;
+const MAX_EMAILS_PER_IP = 20;
 
 export interface ThrottleKey {
   key: string;
@@ -25,8 +40,16 @@ export function loginThrottleKeys(clientIp: string | undefined, email: string): 
   return keys;
 }
 
+/** Caps how often a confirmation or reset link can be mailed to one address, and how many
+ * distinct addresses one host can aim them at. */
+export function emailSendThrottleKeys(clientIp: string | undefined, email: string): ThrottleKey[] {
+  const keys: ThrottleKey[] = [{ key: `mail:${email}`, limit: MAX_EMAILS_PER_ADDRESS }];
+  if (clientIp) keys.push({ key: `mailip:${clientIp}`, limit: MAX_EMAILS_PER_IP });
+  return keys;
+}
+
 /** Seconds the caller must wait, or null when the attempt may proceed. */
-export async function loginRetryAfter(db: D1Database, keys: ThrottleKey[]): Promise<number | null> {
+export async function throttleRetryAfter(db: D1Database, keys: ThrottleKey[]): Promise<number | null> {
   const now = Date.now();
   const { results } = await db
     .prepare(`SELECT key, failures, window_start FROM login_attempts WHERE key IN (${keys.map(() => "?").join(",")})`)
@@ -44,7 +67,7 @@ export async function loginRetryAfter(db: D1Database, keys: ThrottleKey[]): Prom
   return retryAfter > 0 ? retryAfter : null;
 }
 
-export async function recordLoginFailure(db: D1Database, keys: ThrottleKey[]): Promise<void> {
+export async function recordThrottleHit(db: D1Database, keys: ThrottleKey[]): Promise<void> {
   const now = Date.now();
   const cutoff = now - WINDOW_MS;
   await db.batch(
@@ -63,11 +86,11 @@ export async function recordLoginFailure(db: D1Database, keys: ThrottleKey[]): P
 
 /** Clearing needs the correct password for that address, so it can't be used to reset
  * someone else's counter. The per-IP counter is intentionally left alone. */
-export async function clearLoginFailures(db: D1Database, key: string): Promise<void> {
+export async function clearThrottle(db: D1Database, key: string): Promise<void> {
   await db.prepare("DELETE FROM login_attempts WHERE key = ?").bind(key).run();
 }
 
-export async function pruneLoginAttempts(db: D1Database): Promise<void> {
+export async function pruneThrottleAttempts(db: D1Database): Promise<void> {
   await db.prepare("DELETE FROM login_attempts WHERE window_start < ?").bind(Date.now() - WINDOW_MS).run();
 }
 

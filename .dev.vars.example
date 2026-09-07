@@ -1,3 +1,19 @@
 # Copy to .dev.vars and fill in. Never commit .dev.vars.
 # Get a TBA key at https://www.thebluealliance.com/account
 TBA_API_KEY=your-tba-read-api-key-here
+
+# Account email (confirmation + password reset). Leave RESEND_API_KEY unset locally and the
+# mail is captured in D1 instead of sent, readable at /api/auth/dev/outbox?email=...
+# EMAIL_DEV_OUTBOX switches that route on, and belongs in .dev.vars only — on a deploy it
+# would hand anyone a reset link for any address.
+EMAIL_DEV_OUTBOX=1
+# RESEND_API_KEY=re_...
+# EMAIL_FROM=FRC Fantasy <no-reply@yourdomain.com>
+
+# Google sign-in — the one path that works with no domain of your own. Create an OAuth
+# client at console.cloud.google.com, and add this exact authorized redirect URI:
+#   http://localhost:5173/api/auth/google/callback
+# Unset, the Google button is hidden and the routes 404, so the app runs fine without it.
+# GOOGLE_CLIENT_ID=...apps.googleusercontent.com
+# GOOGLE_CLIENT_SECRET=...
+

@@ -13,7 +13,18 @@
     "enabled": true
   },
   "vars": {
-    "SEASON_YEAR": "2026"
+    "SEASON_YEAR": "2026",
+    // Origin the links in confirmation/reset emails point at. Left empty, links fall back to
+    // the request's own origin, which is fine locally but trusts a client-supplied Host
+    // header — set it to your real origin before going live.
+    "APP_URL": "https://frc-fantasy.andyztao.workers.dev",
+    // Must be on a domain verified with Resend. Empty falls back to Resend's shared
+    // onboarding@resend.dev sender, which only delivers to your own account address.
+    "EMAIL_FROM": "",
+    // Google OAuth client id. Not a secret — it travels in the redirect URL — so it lives
+    // here; the matching secret goes in with `wrangler secret put GOOGLE_CLIENT_SECRET`.
+    // Empty hides the Google button and 404s its routes.
+    "GOOGLE_CLIENT_ID": "781439260223-6aps9hf8ajdur0dkcnaievbu9fmh2uph.apps.googleusercontent.com"
   },
   "d1_databases": [
     {

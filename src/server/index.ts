@@ -2,9 +2,11 @@ import { Hono } from "hono";
 import type { AppContext } from "./lib/context";
 import type { Env } from "./lib/env";
 import { seasonYear } from "./lib/env";
+import { pruneAuthTokens } from "./lib/auth";
+import { pruneOutboundEmails } from "./lib/email";
 import { recomputeLeagueScores } from "./lib/scores";
 import { activeEventKeys, syncEventResults, syncEvents } from "./lib/sync";
-import { pruneLoginAttempts } from "./lib/throttle";
+import { pruneThrottleAttempts } from "./lib/throttle";
 import { TbaError } from "./lib/tba";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
@@ -62,7 +64,9 @@ async function scheduled(_event: ScheduledController, env: Env): Promise<void> {
     await recomputeLeagueScores(env, league.id);
   }
 
-  await pruneLoginAttempts(env.DB);
+  await pruneThrottleAttempts(env.DB);
+  await pruneAuthTokens(env.DB);
+  await pruneOutboundEmails(env.DB);
 }
 
 export default {

@@ -1,10 +1,59 @@
+import { useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 
 const linkBase = "px-3 py-2 rounded-md text-sm font-medium transition-colors";
 
+/**
+ * Shown until the address is confirmed. The gate it explains is narrow on purpose — creating
+ * and joining leagues — so this stays informative rather than blocking the whole app.
+ */
+function UnverifiedBanner({ email, onRefresh }: { email: string; onRefresh: () => Promise<void> }) {
+  const [state, setState] = useState<"idle" | "sending" | "sent">("idle");
+  const [error, setError] = useState("");
+
+  async function resend() {
+    setState("sending");
+    setError("");
+    try {
+      await api.post("/auth/resend-verification");
+      setState("sent");
+    } catch (caught) {
+      setState("idle");
+      setError(caught instanceof Error ? caught.message : "Could not send that email");
+    }
+  }
+
+  return (
+    <div className="border-b border-amber-200 bg-amber-50">
+      <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-sm text-amber-900">
+        <span>
+          Confirm <span className="font-medium">{email}</span> to create or join a league.
+        </span>
+        {state === "sent" ? (
+          <span className="text-amber-800">Sent — check your inbox.</span>
+        ) : (
+          <button
+            type="button"
+            onClick={resend}
+            disabled={state === "sending"}
+            className="font-medium underline underline-offset-2 hover:text-amber-950 disabled:opacity-50"
+          >
+            {state === "sending" ? "Sending…" : "Resend the link"}
+          </button>
+        )}
+        <button type="button" onClick={() => void onRefresh()} className="text-amber-700 hover:text-amber-950">
+          Already confirmed? Recheck
+        </button>
+        {error && <span className="text-red-700">{error}</span>}
+      </div>
+    </div>
+  );
+}
+
 export function Layout() {
-  const { user, logout } = useAuth();
+  const { user, logout, refresh } = useAuth();
   const navigate = useNavigate();
 
   async function handleLogout() {
@@ -68,6 +117,8 @@ export function Layout() {
           </button>
         </div>
       </header>
+
+      {user && !user.emailVerified && <UnverifiedBanner email={user.email} onRefresh={refresh} />}
 
       <main className="mx-auto max-w-6xl px-4 py-8">
         <Outlet />

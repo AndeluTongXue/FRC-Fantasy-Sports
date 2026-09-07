@@ -1,13 +1,18 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { GoogleSignIn } from "../components/GoogleSignIn";
+import { useProviders } from "../lib/providers";
 import { useAuth } from "../lib/auth";
 
 export function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const { passwordReset } = useProviders();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  // The Google callback is a redirect, so it reports failures through the URL.
+  const [error, setError] = useState(params.get("oauthError") ?? "");
   const [pending, setPending] = useState(false);
 
   async function handleSubmit(event: React.FormEvent) {
@@ -31,41 +36,53 @@ export function Login() {
       </h1>
       <p className="mb-6 text-sm text-slate-600">Sign in to draft and manage your leagues.</p>
 
-      <form onSubmit={handleSubmit} className="space-y-4 rounded-lg border border-edge bg-surface p-6">
-        <label className="block">
-          <span className="mb-1 block text-sm text-slate-700">Email</span>
-          <input
-            type="email"
-            required
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            className="w-full rounded-md border border-edge bg-surface-raised px-3 py-2 outline-none focus:border-sky-500"
-          />
-        </label>
+      <div className="rounded-lg border border-edge bg-surface p-6">
+        <GoogleSignIn label="Continue with Google" />
 
-        <label className="block">
-          <span className="mb-1 block text-sm text-slate-700">Password</span>
-          <input
-            type="password"
-            required
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            className="w-full rounded-md border border-edge bg-surface-raised px-3 py-2 outline-none focus:border-sky-500"
-          />
-        </label>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <label className="block">
+            <span className="mb-1 block text-sm text-slate-700">Email</span>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              className="w-full rounded-md border border-edge bg-surface-raised px-3 py-2 outline-none focus:border-sky-500"
+            />
+          </label>
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
+          <label className="block">
+            <span className="mb-1 block text-sm text-slate-700">Password</span>
+            <input
+              type="password"
+              required
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className="w-full rounded-md border border-edge bg-surface-raised px-3 py-2 outline-none focus:border-sky-500"
+            />
+          </label>
 
-        <button
-          type="submit"
-          disabled={pending}
-          className="w-full rounded-md bg-sky-600 px-3 py-2 font-medium text-white hover:bg-sky-700 disabled:opacity-50"
-        >
-          {pending ? "Signing in…" : "Sign in"}
-        </button>
-      </form>
+          {error && <p className="text-sm text-red-600">{error}</p>}
 
-      <p className="mt-4 text-center text-sm text-slate-600">
+          <button
+            type="submit"
+            disabled={pending}
+            className="w-full rounded-md bg-sky-600 px-3 py-2 font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+          >
+            {pending ? "Signing in…" : "Sign in"}
+          </button>
+        </form>
+      </div>
+
+      {passwordReset && (
+        <p className="mt-4 text-center text-sm text-slate-600">
+          <Link to="/forgot-password" className="text-sky-600 hover:underline">
+            Forgot your password?
+          </Link>
+        </p>
+      )}
+
+      <p className="mt-2 text-center text-sm text-slate-600">
         No account?{" "}
         <Link to="/signup" className="text-sky-600 hover:underline">
           Create one

@@ -123,6 +123,72 @@ public deploy. The admin-only buttons on the Teams and Events pages (syncing, re
 only render for admins, and the flag is read per request, so promoting an account takes
 effect on the next page load with no re-login.
 
+**Sign in with Google** — the recommended path, and the only one that needs no domain of
+your own. Google vouches for the address, so the account is confirmed the moment it's
+created and there's no password to reset. Standard authorization-code flow with PKCE:
+`state` in an httpOnly cookie defends the callback against CSRF, and the `code_verifier`
+against an intercepted code being redeemed by anyone else. See
+[`src/server/lib/oauth.ts`](src/server/lib/oauth.ts).
+
+Accounts are keyed on Google's `sub`, not the email address — `sub` is stable for the life
+of the Google account while the address on it can change, so matching on email would hand
+the account to whoever inherits an old address. Signing in with Google on an address that
+already has a password account **links** the two: same account, now reachable either way.
+That's only safe because the ID token's `email_verified` claim is checked, and a token
+whose claim is false is refused outright. An account created through Google has no password
+(`password_hash` is `''`, which `verifyPassword` rejects), so password sign-in isn't
+available for it until there's a UI to set one.
+
+The ID token's signature isn't checked against Google's JWKS and doesn't need to be: it
+arrives over a TLS connection opened directly to Google's token endpoint. Its claims are
+still validated — an unchecked `aud` would let a token minted for someone else's OAuth
+client be replayed at ours.
+
+With `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` unset the button is hidden and both routes
+404, so the app runs fine without them.
+
+**Email confirmation** — signing up with a password mails a confirmation link and leaves the account
+*unconfirmed*. You're signed in straight away and can browse teams, events and any league
+you're already in, but creating or joining a league is blocked until you click the link —
+those are the actions that put your address in front of other people. A banner across the
+top says so and can resend the link. Accounts that predate this were grandfathered in as
+confirmed: they signed up when no confirmation existed, and locking them out of leagues
+they already run would be the worse outcome.
+
+`GET /api/auth/providers` reports what this particular deploy can actually do, and the
+sign-in pages hide what it can't: no OAuth client, no Google button; no way to deliver
+email, no "Forgot your password?" link, and `forgot-password` answers 503 rather than the
+usual generic success — that message would be a promise the deploy can't keep.
+
+The gate only stands where a link can actually be delivered — a provider configured, or the
+development outbox switched on. With neither, it degrades to the banner, because enforcing
+it would lock every new account out of leagues forever waiting on a link that was never
+going to arrive. See `canDeliverEmail` in [`src/server/lib/email.ts`](src/server/lib/email.ts).
+
+**Password reset** — `POST /api/auth/forgot-password` mails a link, and answers identically
+whether or not the address has an account, so it can't be used to test which addresses are
+registered. Redeeming it sets the new password, drops **every** session the account had
+(the whole point of a reset is defeated if the other party's session survives it), and
+signs you in on the spot. It also marks the address confirmed, since clicking the link
+proves the same thing confirmation proves — so "I never got the confirmation email" isn't a
+dead end.
+
+Both links carry a random 32-byte token of which only the SHA-256 digest is stored, the same
+way sessions work: a D1 leak isn't enough to take over an account. They're single-use,
+scoped to one purpose (a reset token is not a confirmation token), invalidated if the
+account's address changes, and expire — 24 hours for confirmation, 1 hour for a reset.
+Asking for a second link retires the first. Routes that send mail are limited to 5 per
+address and 20 per IP per 15 minutes, because the address being mailed is one the *caller*
+typed: unlimited, they'd be a way to make us bury a stranger's inbox.
+
+Mail goes out through [Resend](https://resend.com) — set `RESEND_API_KEY` as a secret and
+`EMAIL_FROM` to an address on a domain you've verified with them. Swapping providers is the
+one `sendEmail` function in [`src/server/lib/email.ts`](src/server/lib/email.ts). `APP_URL`
+in `wrangler.jsonc` is the origin the emailed links point at; leave it empty and links fall
+back to the request's own origin, which trusts a client-supplied `Host` header — fine
+locally, not on a deploy, where someone could request a reset for your address and have the
+link point at a host they control.
+
 **Sign-in throttling** — failed sign-ins are counted per email (10 per 15 minutes) and per
 IP (50, looser because a shared NAT legitimately produces some), and the limit is checked
 before the password hash is verified so a locked-out attacker can't keep burning CPU. A
@@ -146,6 +212,11 @@ npm run db:migrate:local
 npm run dev
 ```
 
+For Google sign-in locally, create an OAuth client at
+[console.cloud.google.com](https://console.cloud.google.com) (APIs & Services → Credentials →
+OAuth client ID → Web application), add `http://localhost:5173/api/auth/google/callback` as
+an authorized redirect URI, and put the id and secret in `.dev.vars`.
+
 Then sign up in the app and grant yourself admin, so you can seed the data:
 
 ```bash
@@ -165,9 +236,23 @@ curl -b cookies.txt -X POST http://localhost:5173/api/admin/price-teams
 `SEASON_YEAR` in `wrangler.jsonc` controls which season the app serves; pricing reads the
 season before it.
 
+With `RESEND_API_KEY` unset and `EMAIL_DEV_OUTBOX=1`, confirmation and reset mail isn't
+sent — it's captured in D1 and readable at `/api/auth/dev/outbox?email=...`, so you can copy
+the link out of it:
+
+```bash
+curl 'http://localhost:5173/api/auth/dev/outbox?email=you@example.com'
+```
+
+`EMAIL_DEV_OUTBOX` gates both the capture and the route, and belongs in `.dev.vars` and
+nowhere else — on a deploy it would hand anyone a reset link for any address.
+
 ## Tests
 
-These scripts drive the real API and WebSocket draft against a running dev server:
+These scripts drive the real API and WebSocket draft against a running dev server. They all
+sign accounts up, and league routes need a confirmed address, so the dev server needs
+`EMAIL_DEV_OUTBOX=1` and no `RESEND_API_KEY` — the scripts read each confirmation link back
+out of the outbox ([`scripts/lib/confirm-email.mjs`](scripts/lib/confirm-email.mjs)).
 
 ```bash
 node scripts/draft-smoke.mjs         # turn order, budget guards, snake reversal, completion
@@ -179,7 +264,17 @@ node scripts/leave-league-smoke.mjs  # leaving pre-draft, commissioner transfer,
 node scripts/ban-league-smoke.mjs    # commissioner-only ban/unban, kick + rejoin block, self-ban refused, post-draft lock
 node scripts/hardening-smoke.mjs    # admin-only sync routes, failed-sign-in lockout, refresh-scores cooldown
 node scripts/schedule-draft-smoke.mjs # scheduling at creation/after, edit/cancel, permissions, real auto-start
+node scripts/auth-email-smoke.mjs    # confirmation gating, single-use links, reset + session invalidation, no address enumeration
+node scripts/google-oauth-smoke.mjs  # PKCE/state on the way out, every callback refusal on the way back
 ```
+
+`google-oauth-smoke.mjs` covers both configurations: with no OAuth client it checks the
+routes are absent, and with one (dummy values are enough) it checks the redirect and the
+callback's guards. Consent at accounts.google.com can't be automated, so sign in through
+the UI once to cover the happy path.
+
+`draft-smoke.mjs` and `season-smoke.mjs` default to port 5174; pass
+`http://localhost:5173` if that's where your dev server is.
 
 ## Deploying to Cloudflare
 
@@ -194,8 +289,18 @@ if this grows.
 npx wrangler d1 create frc-fantasy-db      # put the returned database_id in wrangler.jsonc
 npm run db:migrate:remote
 npx wrangler secret put TBA_API_KEY
+npx wrangler secret put RESEND_API_KEY       # account email, optional; see "Accounts and rate limits"
+npx wrangler secret put GOOGLE_CLIENT_SECRET # Google sign-in, optional
 npm run deploy
 ```
+
+Set `APP_URL` (your real origin) in `wrangler.jsonc` before deploying — the emailed links
+and the OAuth redirect URI are both built from it. `GOOGLE_CLIENT_ID` goes there too (it's
+not a secret; it travels in the redirect URL), and the OAuth client needs
+`<APP_URL>/api/auth/google/callback` on its authorized redirect list, matching exactly.
+`EMAIL_FROM` needs an address on a domain verified with Resend. Without `RESEND_API_KEY` the app still runs,
+but confirmation and reset mail is dropped (with a warning in the logs) rather than stored
+— so nobody new can create or join a league.
 
 Then sign up on the deployed app and promote that account, so it can run the sync jobs:
 
@@ -210,6 +315,6 @@ beyond TBA.
 
 ## Not built yet
 
-- Password reset (needs an email provider)
-- Commissioner UI for editing scoring weights (the column exists; only defaults are written)
+- Changing your own email address or display name (there's no account settings page yet)
+- Setting a password on an account created through Google (it can only sign in with Google)
 - Trades and waivers

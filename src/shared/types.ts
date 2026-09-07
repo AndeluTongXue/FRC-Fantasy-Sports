@@ -7,6 +7,9 @@ export interface User {
   displayName: string;
   /** Gates `/api/admin/*` (the TBA/Statbotics sync jobs). Granted in D1, not in the app. */
   isAdmin: boolean;
+  /** False until the confirmation link is clicked. Creating and joining leagues is gated
+   * on it; everything else works either way. */
+  emailVerified: boolean;
 }
 
 export interface Team {

@@ -4,12 +4,15 @@ import { useAuth } from "./lib/auth";
 import { Admin } from "./pages/Admin";
 import { Draft } from "./pages/Draft";
 import { Events } from "./pages/Events";
+import { ForgotPassword } from "./pages/ForgotPassword";
 import { League } from "./pages/League";
 import { Leagues } from "./pages/Leagues";
 import { Login } from "./pages/Login";
+import { ResetPassword } from "./pages/ResetPassword";
 import { Signup } from "./pages/Signup";
 import { Standings } from "./pages/Standings";
 import { Teams } from "./pages/Teams";
+import { VerifyEmail } from "./pages/VerifyEmail";
 
 export function App() {
   const { user, loading } = useAuth();
@@ -23,6 +26,9 @@ export function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/verify-email" element={<VerifyEmail />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );
@@ -30,6 +36,10 @@ export function App() {
 
   return (
     <Routes>
+      {/* Also reachable signed in: signup leaves you with a session, so the confirmation
+          link usually opens in a tab that already has one. */}
+      <Route path="/verify-email" element={<VerifyEmail />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
       <Route element={<Layout />}>
         <Route path="/" element={<Leagues />} />
         <Route path="/leagues/:leagueId" element={<League />} />

@@ -3,6 +3,7 @@ import { getCookie } from "hono/cookie";
 import type { User } from "../../shared/types";
 import type { Env } from "./env";
 import { SESSION_COOKIE, resolveSession } from "./auth";
+import { canDeliverEmail } from "./email";
 
 export type AppContext = {
   Bindings: Env;
@@ -25,6 +26,23 @@ export const requireAuth: MiddlewareHandler<AppContext> = async (c, next) => {
  */
 export const requireAdmin: MiddlewareHandler<AppContext> = async (c, next) => {
   if (!c.get("user").isAdmin) return c.json({ error: "Admins only" }, 403);
+  await next();
+};
+
+/**
+ * Rejects the request unless the account's email is confirmed. Must run after `requireAuth`.
+ * Deliberately narrow: it guards creating and joining leagues — the actions that put an
+ * address in front of other people and that later hang notifications off it — and nothing
+ * else, so an unconfirmed account can still sign in and look around.
+ */
+export const requireVerifiedEmail: MiddlewareHandler<AppContext> = async (c, next) => {
+  // The gate only stands where a confirmation link can actually be delivered; see
+  // `canDeliverEmail`. Otherwise it degrades to the banner.
+  if (!canDeliverEmail(c.env)) return next();
+
+  if (!c.get("user").emailVerified) {
+    return c.json({ error: "Confirm your email address first — check your inbox for the link." }, 403);
+  }
   await next();
 };
 

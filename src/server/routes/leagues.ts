@@ -3,7 +3,7 @@ import { applySeasonCap, REGULAR_SEASON_EVENT_CAP } from "../../shared/scoring";
 import { DEFAULT_SCORING } from "../../shared/types";
 import type { ScoringConfig } from "../../shared/types";
 import type { AppContext } from "../lib/context";
-import { requireAuth } from "../lib/context";
+import { requireAuth, requireVerifiedEmail } from "../lib/context";
 import { seasonYear } from "../lib/env";
 import { minimumSalaryCap, pricingYearForLeague } from "../lib/pricing";
 import { syncAndScoreLeague } from "../lib/scores";
@@ -141,7 +141,7 @@ export const leagueRoutes = new Hono<AppContext>();
 
 leagueRoutes.use("*", requireAuth);
 
-leagueRoutes.post("/", async (c) => {
+leagueRoutes.post("/", requireVerifiedEmail, async (c) => {
   const user = c.get("user");
   const body = await c.req.json<Record<string, unknown>>();
   const name = String(body.name ?? "").trim();
@@ -244,7 +244,7 @@ leagueRoutes.get("/", async (c) => {
   });
 });
 
-leagueRoutes.post("/join", async (c) => {
+leagueRoutes.post("/join", requireVerifiedEmail, async (c) => {
   const user = c.get("user");
   const body = await c.req.json<{ inviteCode?: string }>();
   const code = (body.inviteCode ?? "").trim().toUpperCase();

@@ -9,6 +9,10 @@ interface AuthState {
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string, displayName: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Adopts a user the server just handed back (password reset signs you straight in). */
+  adopt: (user: User) => void;
+  /** Re-reads /auth/me — used after confirming an email, so the banner clears. */
+  refresh: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -40,9 +44,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
+  const adopt = useCallback((next: User) => setUser(next), []);
+
+  const refresh = useCallback(async () => {
+    const data = await api.get<{ user: User }>("/auth/me").catch(() => null);
+    setUser(data?.user ?? null);
+  }, []);
+
   const value = useMemo(
-    () => ({ user, loading, login, signup, logout }),
-    [user, loading, login, signup, logout],
+    () => ({ user, loading, login, signup, logout, adopt, refresh }),
+    [user, loading, login, signup, logout, adopt, refresh],
   );
 
   return <AuthContext value={value}>{children}</AuthContext>;

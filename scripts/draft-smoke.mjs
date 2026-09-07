@@ -6,6 +6,8 @@
  */
 import WebSocket from "ws";
 
+import { confirmEmail } from "./lib/confirm-email.mjs";
+
 const BASE = process.argv[2] ?? "http://localhost:5174";
 const failures = [];
 
@@ -25,6 +27,8 @@ async function signIn(email, password, displayName) {
     if (response.ok) {
       const cookie = response.headers.get("set-cookie").split(";")[0];
       const { user } = await response.json();
+      // League routes need a confirmed address, and a fresh signup starts unconfirmed.
+      if (path === "/api/auth/signup") await confirmEmail(BASE, email);
       return { cookie, user };
     }
   }
