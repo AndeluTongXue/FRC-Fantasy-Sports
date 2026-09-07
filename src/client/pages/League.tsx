@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CopyButton } from "../components/CopyButton";
 import { MAX_PICK_SECONDS, MIN_PICK_SECONDS } from "../../shared/types";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api";
@@ -494,6 +495,7 @@ export function League() {
         </div>
         <div className="rounded-md border border-edge bg-surface px-3 py-2 text-sm">
           Invite code <span className="ml-1 font-mono text-sky-600">{league.inviteCode}</span>
+          <CopyButton value={league.inviteCode} label="Copy invite code" className="ml-1.5" />
         </div>
         <Link
           to={`/leagues/${league.id}/standings`}

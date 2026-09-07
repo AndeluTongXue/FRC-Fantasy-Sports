@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { CopyButton } from "../components/CopyButton";
 import { DraftQueue } from "../components/DraftQueue";
 import type { QueueTeam } from "../components/DraftQueue";
 import { api } from "../lib/api";
@@ -149,6 +150,7 @@ export function Draft() {
           <p className="mb-4 text-sm text-slate-500">
             {detail.members.length} of {detail.league.maxMembers} owners have joined · share code{" "}
             <span className="font-mono text-sky-600">{detail.league.inviteCode}</span>
+            <CopyButton value={detail.league.inviteCode} label="Copy invite code" className="ml-1.5" />
           </p>
           {state.scheduledDraftAt !== null && (
             <p className="mb-4 text-sm text-sky-700">
