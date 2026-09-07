@@ -38,6 +38,11 @@ first. Only when the queue yields nothing does it fall back to the old behaviour
 the best affordable team, which is a guess at what the manager wanted rather than a
 statement of it. Drafting a team drops it from every queue in the league.
 
+Reordering is drag-or-buttons. The drag is built on Pointer Events rather than the HTML5
+drag-and-drop API, which never fires on touch — this list gets reordered on a phone at a
+competition, and a desktop-only implementation would look fine there and do nothing. The
+↑/↓ buttons stay as the keyboard path and as a precise fallback on a small target.
+
 Queues are private: the route only ever reads back the signed-in manager's own, since seeing
 an opponent's would be a large unearned advantage. They're editable from the draft room
 before and during the draft, and go read-only once it finishes.
