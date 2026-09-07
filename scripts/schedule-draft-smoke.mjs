@@ -7,6 +7,10 @@
  * server enforces at least a 1-minute lead, so there's no way to make this instant) —
  * expect this script to take a little over a minute.
  *
+ * Also covers the roster staleness scheduling used to cause: setting a schedule is what
+ * first persists a pending draft state, and that state was a snapshot of who was in the
+ * league at that moment.
+ *
  * Usage: node scripts/schedule-draft-smoke.mjs [baseUrl]
  */
 import { confirmEmail } from "./lib/confirm-email.mjs";
@@ -270,6 +274,44 @@ check(
   soloResult.league?.status === "setup",
   soloResult.league?.status,
 );
+
+console.log("");
+console.log("A scheduled room keeps its roster current:");
+// Scheduling is what persists a pending state in the Durable Object. Before this was fixed
+// that state froze the roster: the room showed one owner while the league page showed two.
+const rosterOwner = await signIn(`sched-roster-a-${Date.now()}@example.com`, "Roster Owner");
+const rosterJoiner = await signIn(`sched-roster-b-${Date.now()}@example.com`, "Roster Joiner");
+const rosterLeague = await newLeague(rosterOwner.cookie, {
+  name: `Roster Refresh ${Date.now()}`,
+  scheduledDraftAt: Date.now() + 60 * 60 * 1000,
+});
+
+const room = await connectDraft(rosterOwner.cookie, rosterLeague.id);
+const pushed = [];
+room.on("message", (raw) => {
+  const message = JSON.parse(raw.toString());
+  if (message.type === "state") pushed.push(message.state);
+});
+await new Promise((r) => setTimeout(r, 500));
+check("the room starts with just the commissioner", pushed.at(-1).order.length === 1, `${pushed.at(-1).order.length}`);
+
+await api(rosterJoiner.cookie, "/api/leagues/join", {
+  method: "POST",
+  body: JSON.stringify({ inviteCode: rosterLeague.inviteCode }),
+});
+await new Promise((r) => setTimeout(r, 1500));
+
+const joined = pushed.at(-1);
+check("a manager joining is pushed to an open room", pushed.length >= 2, `${pushed.length} state pushes`);
+check("the owner list grows", joined.order.length === 2, `${joined.order.length} owners`);
+check("budgets cover both managers", Object.keys(joined.budgets).length === 2, `${Object.keys(joined.budgets).length}`);
+check("totalPicks accounts for both", joined.totalPicks === 2 * joined.rosterSize, `${joined.totalPicks}`);
+check("and the schedule survives the refresh", joined.scheduledDraftAt !== null);
+
+await api(rosterJoiner.cookie, `/api/leagues/${rosterLeague.id}/leave`, { method: "POST" });
+await new Promise((r) => setTimeout(r, 1500));
+check("leaving shrinks it again", pushed.at(-1).order.length === 1, `${pushed.at(-1).order.length} owners`);
+room.close();
 
 console.log(
   failures.length ? `\n${failures.length} FAILED: ${failures.join(", ")}` : "\nAll schedule-draft checks passed.",

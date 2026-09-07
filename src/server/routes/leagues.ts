@@ -336,6 +336,7 @@ leagueRoutes.post("/join", requireVerifiedEmail, async (c) => {
     .bind(league.id, user.id, `${user.displayName}'s team`, Date.now())
     .run();
 
+  await notifyDraftRoom(c.env, league.id);
   return c.json({ league: toLeague(league) });
 });
 
@@ -451,6 +452,18 @@ leagueRoutes.get("/:id", async (c) => {
 
 /** Only the salary cap is editable, and only before the draft starts — once picks exist,
  * changing the cap would retroactively make some already-drafted picks illegal. */
+/** Tells an open draft room its roster changed, so anyone sitting in it sees the new list
+ * without reloading. Pre-draft only on the room's side; failures here must not fail the
+ * membership change that already succeeded. */
+async function notifyDraftRoom(env: AppContext["Bindings"], leagueId: string): Promise<void> {
+  try {
+    const stub = env.DRAFT_ROOM.get(env.DRAFT_ROOM.idFromName(leagueId));
+    await stub.membershipChanged(leagueId);
+  } catch (caught) {
+    console.error("Could not refresh the draft room roster", caught);
+  }
+}
+
 /**
  * Pre-draft league settings the commissioner can still change: the salary cap and the pick
  * clock. Both are locked once the draft starts — the cap because rosters are already priced
@@ -695,6 +708,7 @@ leagueRoutes.post("/:id/leave", async (c) => {
     await c.env.DB.prepare("DELETE FROM league_members WHERE league_id = ? AND user_id = ?")
       .bind(leagueId, user.id)
       .run();
+    await notifyDraftRoom(c.env, leagueId);
     return c.json({ ok: true });
   }
 
@@ -716,6 +730,7 @@ leagueRoutes.post("/:id/leave", async (c) => {
     c.env.DB.prepare("DELETE FROM league_members WHERE league_id = ? AND user_id = ?").bind(leagueId, user.id),
   ]);
 
+  await notifyDraftRoom(c.env, leagueId);
   return c.json({ ok: true, newCommissionerId: successor.user_id });
 });
 
@@ -751,6 +766,7 @@ leagueRoutes.post("/:id/ban", async (c) => {
     ).bind(leagueId, targetId, Date.now()),
   ]);
 
+  await notifyDraftRoom(c.env, leagueId);
   return c.json({ ok: true });
 });
 

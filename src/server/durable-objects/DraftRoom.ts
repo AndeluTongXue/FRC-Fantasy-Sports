@@ -61,6 +61,7 @@ export class DraftRoom extends DurableObject<Env> {
     this.ctx.acceptWebSocket(server, [userId]);
 
     await this.healLegacyState();
+    await this.refreshPending();
     const state = this.state ?? (await this.buildPendingState());
     server.send(JSON.stringify({ type: "state", state } satisfies DraftServerMessage));
 
@@ -240,6 +241,44 @@ export class DraftRoom extends DurableObject<Env> {
       salaryCap: league.salary_cap,
       cheapestPrices: await this.cheapestPrices(league, roster.length * league.roster_size),
     };
+  }
+
+  /**
+   * Re-derives a *pending* room from D1, keeping only the scheduled start time.
+   *
+   * A pending state is only persisted when something forces it — scheduling a draft does —
+   * and from then on it is a snapshot: managers who join afterwards, a manager who leaves or
+   * is banned, and an edited salary cap all leave it stale. `beginDraft` reads the roster
+   * fresh so the draft itself was never wrong, but the room showed one owner while the
+   * league page showed two.
+   *
+   * A room with no persisted state needs nothing: `fetch` builds one from D1 on the spot.
+   */
+  private async refreshPending(): Promise<boolean> {
+    if (!this.state || this.state.status !== "pending") return false;
+
+    const scheduledDraftAt = this.state.scheduledDraftAt;
+    try {
+      this.state = await this.buildPendingState();
+    } catch {
+      return false; // league is gone; leave whatever is here for resetForDeletion to clear
+    }
+    this.state.scheduledDraftAt = scheduledDraftAt;
+    await this.persist();
+    return true;
+  }
+
+  /**
+   * Called by the routes that change who is in a league, so a room someone already has open
+   * updates without them reloading. A no-op once the draft is under way — the roster is
+   * fixed at that point.
+   */
+  async membershipChanged(leagueId: string): Promise<void> {
+    if (this.leagueId !== leagueId) {
+      this.leagueId = leagueId;
+      await this.ctx.storage.put("leagueId", leagueId);
+    }
+    if (await this.refreshPending()) this.broadcast();
   }
 
   private slotsRemaining(userId: string): number {
