@@ -10,7 +10,7 @@ import type { ScoringConfig } from "../../shared/types";
 import type { AppContext } from "../lib/context";
 import { requireAuth, requireVerifiedEmail } from "../lib/context";
 import { seasonYear } from "../lib/env";
-import { minimumSalaryCap, pricingYearForLeague } from "../lib/pricing";
+import { MAX_SALARY_CAP, MIN_SALARY_CAP, minimumSalaryCap, pricingYearForLeague } from "../lib/pricing";
 import type { MinimumCapParams } from "../lib/pricing";
 import { syncAndScoreLeague } from "../lib/scores";
 import { DEFAULT_TEAM_PRICE } from "../lib/statbotics";
@@ -90,11 +90,6 @@ function generateInviteCode(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(6));
   return Array.from(bytes, (byte) => CODE_ALPHABET[byte % CODE_ALPHABET.length]).join("");
 }
-
-/** Hard bounds on a league's salary cap. The usable floor is per-league and higher — see
- * `salaryCapObjection`. */
-const MIN_SALARY_CAP = 50;
-const MAX_SALARY_CAP = 500;
 
 function clamp(value: unknown, min: number, max: number, fallback: number): number {
   const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);

@@ -1,7 +1,14 @@
+import { pickOwner } from "../../shared/types";
 import { DEFAULT_TEAM_PRICE } from "./statbotics";
 
 /** TBA event_type for Offseason events (e.g. Chezy Champs, IRI). */
 const OFFSEASON_EVENT_TYPE = 99;
+
+/** Hard bounds on a league's salary cap, enforced by the create and budget-edit endpoints.
+ * The usable floor is per-league and higher — see `minimumSalaryCap`. The recommendation has
+ * to land inside this range too, or "Use this" would hand back a value refused on save. */
+export const MIN_SALARY_CAP = 50;
+export const MAX_SALARY_CAP = 500;
 
 export interface LeaguePricingContext {
   league_type: string;
@@ -39,6 +46,10 @@ export interface MinimumCapParams {
 
 export interface MinimumCap {
   minimumCap: number;
+  /** The cap that makes for a good draft rather than a merely survivable one. Always at
+   * least `minimumCap`, and inside [MIN_SALARY_CAP, MAX_SALARY_CAP] unless the minimum
+   * itself is already above that ceiling. See `bestAvailableSnakeBill`. */
+  recommendedCap: number;
   /** minimumCap / rosterSize, for a "per-team" figure to display alongside it. */
   worstCaseAveragePrice: number;
   /** How many cheaper teams the worst case assumes opponents hoard before this manager's
@@ -49,6 +60,38 @@ export interface MinimumCap {
   /** True if there aren't even enough teams for every manager to fill a full roster —
    * no cap can fix that; roster size or manager count needs to come down instead. */
   insufficientPool: boolean;
+}
+
+/**
+ * What the priciest draft slot ends up paying when everyone just takes the best team still
+ * on the board — the basis for the recommended cap.
+ *
+ * Price tracks EPA, so "best available" and "priciest available" are the same pick, which
+ * means the teams that actually get drafted are the top `maxMembers × rosterSize` of the
+ * pool. Handing those out in the real snake order (the same `pickOwner` the draft room
+ * advances turns with, so this can't drift from how a draft actually runs) gives each seat a
+ * specific bundle; the snake evens the seats out but never perfectly, and one of them always
+ * ends up with the biggest bill.
+ *
+ * A cap set there means no draft position is priced out of simply taking the best team
+ * available — the default strategy stays open to everyone — while nobody can afford more
+ * than roughly their fair share of the stars, so buying above average anywhere still forces
+ * going below average somewhere else. That's the tradeoff a salary cap exists to create.
+ * It lands a little above the plain market-clearing average (pool value ÷ managers) without
+ * an arbitrary fudge factor, and stays well under the point where the cap stops binding at
+ * all (the sum of the `rosterSize` priciest teams), since any one seat only ever lands one
+ * of the very top teams.
+ */
+function bestAvailableSnakeBill(topPricesDesc: number[], maxMembers: number): number {
+  const seats = Array.from({ length: maxMembers }, (_, index) => String(index));
+  const bills = new Array<number>(maxMembers).fill(0);
+
+  topPricesDesc.forEach((price, pickIndex) => {
+    const seat = Number(pickOwner(seats, pickIndex));
+    bills[seat] += price;
+  });
+
+  return Math.max(...bills);
 }
 
 /**
@@ -77,6 +120,8 @@ export async function minimumSalaryCap(db: D1Database, params: MinimumCapParams)
 
   let universeSize: number;
   let worstCasePrices: number[];
+  /** The teams that actually get drafted, priciest first — at most one per pick. */
+  let draftedPrices: number[];
 
   if (params.league_type === "single_event" && params.event_key) {
     const countRow = await db
@@ -99,6 +144,19 @@ export async function minimumSalaryCap(db: D1Database, params: MinimumCapParams)
       .bind(DEFAULT_TEAM_PRICE, pricingYear, params.event_key, params.roster_size, offset)
       .all<{ price: number }>();
     worstCasePrices = results.map((row) => row.price);
+
+    const top = await db
+      .prepare(
+        `SELECT COALESCE(p.price, ?) AS price
+         FROM event_teams et
+         LEFT JOIN team_prices p ON p.team_key = et.team_key AND p.season_year = ?
+         WHERE et.event_key = ?
+         ORDER BY price DESC
+         LIMIT ?`,
+      )
+      .bind(DEFAULT_TEAM_PRICE, pricingYear, params.event_key, Math.min(totalNeeded, universeSize))
+      .all<{ price: number }>();
+    draftedPrices = top.results.map((row) => row.price);
   } else {
     const countRow = await db
       .prepare("SELECT COUNT(*) AS n FROM team_prices WHERE season_year = ?")
@@ -113,6 +171,12 @@ export async function minimumSalaryCap(db: D1Database, params: MinimumCapParams)
       .bind(pricingYear, params.roster_size, offset)
       .all<{ price: number }>();
     worstCasePrices = results.map((row) => row.price);
+
+    const top = await db
+      .prepare("SELECT price FROM team_prices WHERE season_year = ? ORDER BY price DESC LIMIT ?")
+      .bind(pricingYear, Math.min(totalNeeded, universeSize))
+      .all<{ price: number }>();
+    draftedPrices = top.results.map((row) => row.price);
   }
 
   if (worstCasePrices.length === 0) return null;
@@ -120,8 +184,18 @@ export async function minimumSalaryCap(db: D1Database, params: MinimumCapParams)
   const rawMinimum = worstCasePrices.reduce((sum, price) => sum + price, 0);
   const minimumCap = Math.ceil(rawMinimum / 5) * 5;
 
+  // Clamped into the range the save endpoints accept, then floored at the minimum — a
+  // recommendation below the minimum would be refused on save, and a pool expensive enough
+  // to push the minimum past the ceiling has no valid cap to recommend anyway.
+  const rawRecommended = Math.ceil(bestAvailableSnakeBill(draftedPrices, params.max_members) / 5) * 5;
+  const recommendedCap = Math.max(
+    Math.min(Math.max(rawRecommended, MIN_SALARY_CAP), MAX_SALARY_CAP),
+    minimumCap,
+  );
+
   return {
     minimumCap,
+    recommendedCap,
     worstCaseAveragePrice: Math.round((minimumCap / params.roster_size) * 10) / 10,
     worstCaseOpponentPicks: Math.min(otherCapacity, Math.max(universeSize - params.roster_size, 0)),
     universeSize,

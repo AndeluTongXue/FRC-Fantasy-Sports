@@ -8,6 +8,7 @@ import { earliestScheduleInputValue, formatScheduledDraft } from "../lib/schedul
 
 interface MinimumCap {
   minimumCap: number;
+  recommendedCap: number;
   worstCaseAveragePrice: number;
   worstCaseOpponentPicks: number;
   universeSize: number;
@@ -261,6 +262,15 @@ export function Leagues() {
                   <button
                     type="button"
                     onClick={() => setSalaryCap(minimumCap.minimumCap)}
+                    className="text-sky-600 hover:underline"
+                  >
+                    Use this
+                  </button>
+                  {" · "}
+                  Recommended: ${minimumCap.recommendedCap}{" "}
+                  <button
+                    type="button"
+                    onClick={() => setSalaryCap(minimumCap.recommendedCap)}
                     className="text-sky-600 hover:underline"
                   >
                     Use this

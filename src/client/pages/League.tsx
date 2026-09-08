@@ -98,6 +98,7 @@ export function League() {
   const [scoringError, setScoringError] = useState("");
   const [capMinimum, setCapMinimum] = useState<{
     minimumCap: number;
+    recommendedCap: number;
     worstCaseAveragePrice: number;
     worstCaseOpponentPicks: number;
     universeSize: number;
@@ -143,6 +144,7 @@ export function League() {
     api
       .get<{
         minimumCap: number;
+        recommendedCap: number;
         worstCaseAveragePrice: number;
         worstCaseOpponentPicks: number;
         universeSize: number;
@@ -411,6 +413,15 @@ export function League() {
                     <button
                       type="button"
                       onClick={() => setCapInput(String(capMinimum.minimumCap))}
+                      className="text-sky-600 hover:underline"
+                    >
+                      Use this
+                    </button>
+                    {" · "}
+                    Recommended: ${capMinimum.recommendedCap}{" "}
+                    <button
+                      type="button"
+                      onClick={() => setCapInput(String(capMinimum.recommendedCap))}
                       className="text-sky-600 hover:underline"
                     >
                       Use this

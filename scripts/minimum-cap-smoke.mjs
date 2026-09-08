@@ -110,6 +110,54 @@ check(
   season.body.minimumCap,
 );
 
+console.log("\nRecommended cap:");
+// Everyone taking the best team available means the top `picks` teams by price go out in
+// snake order; the recommendation is whatever the priciest seat's bundle costs. Two
+// managers drafting 4 each from this event only touch the top 8 teams, so it's easy to
+// check by hand.
+const twoManager = await api(
+  owner.cookie,
+  "/api/leagues/minimum-cap?leagueType=single_event&eventKey=2026casnv&rosterSize=4&maxMembers=2",
+);
+const topEight = pool.body.teams
+  .map((t) => t.price)
+  .sort((a, b) => b - a)
+  .slice(0, 8);
+// Snake over 2 seats: seat 0 takes picks 0,3,4,7 and seat 1 takes 1,2,5,6.
+const seatBills = [
+  [0, 3, 4, 7].reduce((sum, i) => sum + topEight[i], 0),
+  [1, 2, 5, 6].reduce((sum, i) => sum + topEight[i], 0),
+];
+const expectedRecommended = Math.ceil(Math.max(...seatBills) / 5) * 5;
+check(
+  "recommended = the priciest snake seat's best-available bill, rounded up to $5",
+  twoManager.body.recommendedCap === expectedRecommended,
+  `${twoManager.body.recommendedCap} vs expected ${expectedRecommended}`,
+);
+check(
+  "recommended leaves the cap still binding — it can't buy the 4 priciest teams outright",
+  twoManager.body.recommendedCap < topEight.slice(0, 4).reduce((sum, p) => sum + p, 0),
+  `${twoManager.body.recommendedCap} vs top-4 total ${topEight.slice(0, 4).reduce((sum, p) => sum + p, 0)}`,
+);
+check(
+  // A season pool's minimum is tiny (the cheap end of 3690 teams); recommending it would
+  // mean a draft spent scraping the barrel, which is the whole reason this number exists.
+  "season recommendation is well clear of the season minimum",
+  season.body.recommendedCap > season.body.minimumCap * 2,
+  `recommended ${season.body.recommendedCap} vs minimum ${season.body.minimumCap}`,
+);
+for (const [label, body] of [
+  ["single-event", singleEvent.body],
+  ["season", season.body],
+  ["two-manager", twoManager.body],
+]) {
+  check(
+    `${label} recommendation is never below the minimum and always saveable ($50–$500)`,
+    body.recommendedCap >= body.minimumCap && body.recommendedCap >= 50 && body.recommendedCap <= 500,
+    `min ${body.minimumCap}, recommended ${body.recommendedCap}`,
+  );
+}
+
 console.log("\nInsufficient-pool detection:");
 const tooManyManagers = await api(
   owner.cookie,

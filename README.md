@@ -109,13 +109,15 @@ calls.
 
 **Minimum cap** — league creation (and the pre-draft budget editor) suggest a starting
 salary cap: the smallest cap that's *guaranteed* safe, no matter how the draft unfolds.
-Ownership is exclusive, so across a whole league at most `maxMembers × rosterSize` teams
-ever get drafted — the "relevant pool" (for a single-event league that's just its own
-roster; a season-long league's pool would otherwise be the entire season's 3000+ teams,
-so it's capped the same way). The worst case for any one manager is being forced into the
-`rosterSize` *most expensive* teams within that pool (e.g. if the cheap tier gets bought up
-by others before their turn) — the minimum cap is the sum of those prices, rounded **up**
-to the nearest $5 so rounding never eats into the safety margin. This is exactly the
+Ownership is exclusive, so the other managers can only ever hoard `(maxMembers - 1) ×
+rosterSize` teams away between them, and a manager short on money always takes the cheapest
+team still on the board. So the worst case isn't the priciest teams in the pool — it's
+being left the `rosterSize` cheapest teams remaining *after* opponents have taken every
+cheaper one, i.e. the price-ascending slice starting right after that hoard. The minimum cap
+is the sum of that slice, rounded **up** to the nearest $5 so rounding never eats into the
+safety margin. (Where the pool is barely big enough to go around, that slice runs into the
+expensive end anyway, which is why a small elite field needs so much more than a season
+league.) This is exactly the
 guarantee the live draft room's reserve-budget rule (below) depends on to never strand a
 manager, so it is **enforced**, not merely suggested: creating a league below it, or editing
 a cap down below it, is refused, naming the minimum and nothing else. Below that line the reserve
@@ -127,6 +129,21 @@ league drawing on 3000+ teams. Where the minimum exceeds the $500 ceiling the me
 to lower the roster size instead, since no cap can fix that, and where there's no cached
 price data to judge against the check stands down rather than blocking. See
 `minimumSalaryCap` in [`src/server/lib/pricing.ts`](src/server/lib/pricing.ts).
+
+**Recommended cap** — shown next to the minimum, and usually the one to take. The minimum
+only keeps a draft from stranding someone; at a season league's minimum of $30 that means
+six robots scraped off the bottom of a 3000+ team pool. The recommendation aims at a draft
+worth playing instead. Price tracks EPA, so "best available" and "priciest available" are
+the same pick, and the teams that actually get drafted are the top `maxMembers × rosterSize`
+of the pool. Dealing those out in the real snake order gives every seat a bundle, and the
+recommendation is whatever the priciest seat's bundle costs: enough that **no draft position
+is priced out of just taking the best team available**, but not enough to buy more than
+roughly a fair share of the stars, so going above average on one robot still means going
+below average on another. It lands a little above the plain market-clearing average (pool
+value ÷ managers) and well under the point where the cap stops binding at all, is floored at
+the minimum (in a pool with no slack the two collapse to the same number), and is clamped to
+the $50–$500 the save endpoints accept. See `bestAvailableSnakeBill` in
+[`src/server/lib/pricing.ts`](src/server/lib/pricing.ts).
 
 **Scoring** — from The Blue Alliance only:
 
