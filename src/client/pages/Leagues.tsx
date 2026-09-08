@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { EventPicker } from "../components/EventPicker";
 import { DEFAULT_PICK_SECONDS, MAX_PICK_SECONDS, MIN_PICK_SECONDS } from "../../shared/types";
 import type { FrcEvent } from "../../shared/types";
 import { api } from "../lib/api";
@@ -91,6 +92,10 @@ export function Leagues() {
   async function createLeague(event: React.FormEvent) {
     event.preventDefault();
     setError("");
+    if (leagueType === "single_event" && !eventKey) {
+      setError("Search for and pick the event this league drafts for");
+      return;
+    }
     if (scheduleEnabled && !scheduledDraftAt) {
       setError("Pick a date and time for the draft, or turn off scheduling");
       return;
@@ -194,19 +199,7 @@ export function Leagues() {
             {leagueType === "single_event" && (
               <label className="block sm:col-span-2">
                 <span className="mb-1 block text-sm text-slate-700">Event</span>
-                <select
-                  required
-                  value={eventKey}
-                  onChange={(event) => setEventKey(event.target.value)}
-                  className="w-full rounded-md border border-edge bg-surface-raised px-3 py-2 outline-none focus:border-sky-500"
-                >
-                  <option value="">Choose an event…</option>
-                  {events.map((event) => (
-                    <option key={event.eventKey} value={event.eventKey}>
-                      {event.name} ({event.eventKey})
-                    </option>
-                  ))}
-                </select>
+                <EventPicker events={events} value={eventKey} onChange={setEventKey} />
               </label>
             )}
 
