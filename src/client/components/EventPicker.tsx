@@ -53,6 +53,7 @@ export function EventPicker({ events, value, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const listRef = useRef<HTMLUListElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const selected = events.find((event) => event.eventKey === value) ?? null;
   const filtered = useMemo(() => events.filter((event) => matches(event, query)), [events, query]);
@@ -90,7 +91,7 @@ export function EventPicker({ events, value, onChange }: Props) {
   }
 
   return (
-    <div className="relative">
+    <div ref={containerRef} className="relative">
       {selected && !open ? (
         <div className="flex items-center gap-2 rounded-md border border-edge bg-surface-raised px-3 py-2">
           <span className="min-w-0 flex-1">
@@ -123,9 +124,12 @@ export function EventPicker({ events, value, onChange }: Props) {
             setOpen(true);
           }}
           onFocus={() => setOpen(true)}
-          // Blur fires before an option's click, so options suppress it by preventing
-          // mousedown; this only has to handle tabbing or clicking away.
-          onBlur={() => setOpen(false)}
+          // Only closes when focus actually leaves the picker. Closing on any blur raced the
+          // option's own click: the blur unmounted the list, so the click had no row left to
+          // land on and the selection was silently dropped.
+          onBlur={(blurEvent) => {
+            if (!containerRef.current?.contains(blurEvent.relatedTarget as Node | null)) setOpen(false);
+          }}
           onKeyDown={onKeyDown}
           className="w-full rounded-md border border-edge bg-surface-raised px-3 py-2 outline-none focus:border-sky-500"
         />
@@ -135,6 +139,8 @@ export function EventPicker({ events, value, onChange }: Props) {
         <ul
           ref={listRef}
           role="listbox"
+          // Keeps focus in the input so the list survives the press; the row's own mousedown
+          // is what actually selects.
           onMouseDown={(mouseEvent) => mouseEvent.preventDefault()}
           className="absolute z-10 mt-1 max-h-64 w-full overflow-y-auto rounded-md border border-edge bg-surface shadow-lg"
         >
@@ -147,7 +153,12 @@ export function EventPicker({ events, value, onChange }: Props) {
               role="option"
               aria-selected={event.eventKey === value}
               onMouseEnter={() => setHighlight(index)}
-              onClick={() => choose(event)}
+              // mousedown, not click: a real press moves focus out of the input, and closing
+              // on that blur used to unmount this row before its click could ever fire.
+              onMouseDown={(mouseEvent) => {
+                mouseEvent.preventDefault();
+                choose(event);
+              }}
               className={`cursor-pointer px-3 py-2 ${index === highlight ? "bg-cream" : ""}`}
             >
               <span className="block truncate text-sm">{event.name}</span>
