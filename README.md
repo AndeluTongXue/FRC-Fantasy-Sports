@@ -118,7 +118,7 @@ by others before their turn) — the minimum cap is the sum of those prices, rou
 to the nearest $5 so rounding never eats into the safety margin. This is exactly the
 guarantee the live draft room's reserve-budget rule (below) depends on to never strand a
 manager, so it is **enforced**, not merely suggested: creating a league below it, or editing
-a cap down below it, is refused with the required figure named. Below that line the reserve
+a cap down below it, is refused, naming the minimum and nothing else. Below that line the reserve
 rule refuses every team from the very first pick — the clock expires, autopick finds nothing
 (a queue is skipped the same way), the turn is skipped, and the draft ends with empty
 rosters. It bites hardest at small elite events, where there is no cheap tier at all: a

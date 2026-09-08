@@ -172,17 +172,11 @@ async function salaryCapObjection(
   const minimum = await minimumSalaryCap(db, params);
   if (!minimum || salaryCap >= minimum.minimumCap) return null;
 
-  const where = params.league_type === "single_event" ? "at this event" : "this season";
-  const detail =
-    `A $${salaryCap} cap can't fill a ${params.roster_size}-team roster ${where}: the ` +
-    `${params.roster_size} most expensive teams a manager could be left with cost ` +
-    `$${minimum.minimumCap}.`;
-
-  // No cap can rescue this one — the ceiling is below what the roster needs.
+  // No cap can rescue this one — the minimum is above the ceiling — so say what to change.
   if (minimum.minimumCap > MAX_SALARY_CAP) {
-    return `${detail} That's above the $${MAX_SALARY_CAP} maximum, so lower the roster size or the number of managers instead.`;
+    return `Minimum salary cap here is $${minimum.minimumCap}, above the $${MAX_SALARY_CAP} maximum. Lower the roster size or manager count.`;
   }
-  return `${detail} Raise the cap to at least $${minimum.minimumCap}, or lower the roster size.`;
+  return `Minimum salary cap here is $${minimum.minimumCap}.`;
 }
 
 leagueRoutes.post("/", requireVerifiedEmail, async (c) => {

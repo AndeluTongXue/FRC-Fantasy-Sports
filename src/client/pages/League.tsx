@@ -407,9 +407,7 @@ export function League() {
                 </button>
                 {capMinimum && (
                   <span className="block w-full text-xs text-slate-500">
-                    Minimum: ${capMinimum.minimumCap} — guarantees every manager can still fill their
-                    roster, worst case if opponents draft the {capMinimum.worstCaseOpponentPicks} cheapest
-                    teams before you do{" "}
+                    Minimum: ${capMinimum.minimumCap}{" "}
                     <button
                       type="button"
                       onClick={() => setCapInput(String(capMinimum.minimumCap))}
@@ -419,8 +417,7 @@ export function League() {
                     </button>
                     {capMinimum.insufficientPool && (
                       <span className="mt-1 block text-amber-700">
-                        Only {capMinimum.universeSize} teams are available — not enough for every manager
-                        to fill a full roster regardless of cap.
+                        Only {capMinimum.universeSize} teams — not enough for a full roster each.
                       </span>
                     )}
                   </span>

@@ -257,9 +257,7 @@ export function Leagues() {
               />
               {minimumCap && (
                 <span className="mt-1 block text-xs text-slate-500">
-                  Minimum: ${minimumCap.minimumCap} — the smallest cap that guarantees every manager can
-                  still fill their roster, worst case if opponents draft the {minimumCap.worstCaseOpponentPicks}{" "}
-                  cheapest teams before you do{" "}
+                  Minimum: ${minimumCap.minimumCap}{" "}
                   <button
                     type="button"
                     onClick={() => setSalaryCap(minimumCap.minimumCap)}
@@ -269,8 +267,7 @@ export function Leagues() {
                   </button>
                   {minimumCap.insufficientPool && (
                     <span className="mt-1 block text-amber-700">
-                      Only {minimumCap.universeSize} teams are available — not enough for every manager to
-                      fill a full roster regardless of cap. Lower the roster size or manager count.
+                      Only {minimumCap.universeSize} teams — not enough for a full roster each.
                     </span>
                   )}
                 </span>
