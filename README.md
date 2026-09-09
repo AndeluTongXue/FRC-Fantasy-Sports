@@ -115,9 +115,11 @@ team still on the board. So the worst case isn't the priciest teams in the pool 
 being left the `rosterSize` cheapest teams remaining *after* opponents have taken every
 cheaper one, i.e. the price-ascending slice starting right after that hoard. The minimum cap
 is the sum of that slice, rounded **up** to the nearest $5 so rounding never eats into the
-safety margin. (Where the pool is barely big enough to go around, that slice runs into the
-expensive end anyway, which is why a small elite field needs so much more than a season
-league.) This is exactly the
+safety margin, and floored at the $50 the save endpoints accept — a cheap enough pool puts
+the true worst case under that, and labelling the field with a figure it would refuse (or,
+on creation, quietly round up) helps nobody. (Where the pool is barely big enough to go
+around, that slice runs into the expensive end anyway, which is why a small elite field
+needs so much more than a season league.) This is exactly the
 guarantee the live draft room's reserve-budget rule (below) depends on to never strand a
 manager, so it is **enforced**, not merely suggested: creating a league below it, or editing
 a cap down below it, is refused, naming the minimum and nothing else. Below that line the reserve

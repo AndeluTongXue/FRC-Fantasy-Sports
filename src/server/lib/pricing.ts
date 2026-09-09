@@ -45,10 +45,13 @@ export interface MinimumCapParams {
 }
 
 export interface MinimumCap {
+  /** The smallest cap a league here can actually be set to: the guaranteed-safe figure, but
+   * never below MIN_SALARY_CAP, since a lower number is one the save endpoints refuse. Can
+   * exceed MAX_SALARY_CAP, which means no legal cap works — say so rather than hiding it. */
   minimumCap: number;
   /** The cap that makes for a good draft rather than a merely survivable one. Always at
-   * least `minimumCap`, and inside [MIN_SALARY_CAP, MAX_SALARY_CAP] unless the minimum
-   * itself is already above that ceiling. See `bestAvailableSnakeBill`. */
+   * least `minimumCap`, and never above MAX_SALARY_CAP unless the minimum already is. See
+   * `bestAvailableSnakeBill`. */
   recommendedCap: number;
   /** minimumCap / rosterSize, for a "per-team" figure to display alongside it. */
   worstCaseAveragePrice: number;
@@ -111,7 +114,11 @@ function bestAvailableSnakeBill(topPricesDesc: number[], maxMembers: number): nu
  * that slice means that worst case is always affordable, which is exactly the guarantee the
  * live draft room's reserve-budget rule depends on to never strand a manager (see
  * DraftRoom's cheapestPrices/reserveCost check). Rounded *up* to the nearest $5 so rounding
- * can never eat into the safety margin.
+ * can never eat into the safety margin, and floored at MIN_SALARY_CAP so what comes back is
+ * always a cap a league can actually be set to.
+ *
+ * Also returns the recommended cap, since both figures are read off the same pool and get
+ * shown together.
  */
 export async function minimumSalaryCap(db: D1Database, params: MinimumCapParams): Promise<MinimumCap | null> {
   const pricingYear = await pricingYearForLeague(db, params);
@@ -181,17 +188,18 @@ export async function minimumSalaryCap(db: D1Database, params: MinimumCapParams)
 
   if (worstCasePrices.length === 0) return null;
 
+  // Floored at the endpoints' own hard minimum: a pool cheap enough for the worst case to
+  // come in under $50 has no cap that low to offer, so reporting the raw figure would label
+  // the field with a number it refuses (creating a league quietly rounded it up instead,
+  // which is worse — you asked for $30 and silently got $50).
   const rawMinimum = worstCasePrices.reduce((sum, price) => sum + price, 0);
-  const minimumCap = Math.ceil(rawMinimum / 5) * 5;
+  const minimumCap = Math.max(Math.ceil(rawMinimum / 5) * 5, MIN_SALARY_CAP);
 
-  // Clamped into the range the save endpoints accept, then floored at the minimum — a
-  // recommendation below the minimum would be refused on save, and a pool expensive enough
-  // to push the minimum past the ceiling has no valid cap to recommend anyway.
+  // Held under the ceiling, then floored at the minimum — a recommendation below the minimum
+  // would be refused on save, and a pool expensive enough to push the minimum past the
+  // ceiling has no valid cap to recommend anyway.
   const rawRecommended = Math.ceil(bestAvailableSnakeBill(draftedPrices, params.max_members) / 5) * 5;
-  const recommendedCap = Math.max(
-    Math.min(Math.max(rawRecommended, MIN_SALARY_CAP), MAX_SALARY_CAP),
-    minimumCap,
-  );
+  const recommendedCap = Math.max(Math.min(rawRecommended, MAX_SALARY_CAP), minimumCap);
 
   return {
     minimumCap,

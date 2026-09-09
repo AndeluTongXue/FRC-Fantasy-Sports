@@ -109,6 +109,14 @@ check(
   season.body.minimumCap > 0 && season.body.minimumCap < 200,
   season.body.minimumCap,
 );
+check(
+  // The raw worst case down here is ~$30, which the save endpoints refuse: creating a league
+  // at it quietly rounded up to $50, and editing one to it was rejected outright. Whatever
+  // gets labelled "Minimum" has to be a cap you can actually set.
+  "season minimum is floored at the $50 the endpoints accept, not the raw sub-$50 worst case",
+  season.body.minimumCap >= 50,
+  season.body.minimumCap,
+);
 
 console.log("\nRecommended cap:");
 // Everyone taking the best team available means the top `picks` teams by price go out in
@@ -146,14 +154,19 @@ check(
   season.body.recommendedCap > season.body.minimumCap * 2,
   `recommended ${season.body.recommendedCap} vs minimum ${season.body.minimumCap}`,
 );
+// Both figures sit behind a "Use this" button, so both have to be values the save endpoints
+// take — the recommendation additionally never landing under the minimum.
 for (const [label, body] of [
   ["single-event", singleEvent.body],
   ["season", season.body],
   ["two-manager", twoManager.body],
 ]) {
   check(
-    `${label} recommendation is never below the minimum and always saveable ($50–$500)`,
-    body.recommendedCap >= body.minimumCap && body.recommendedCap >= 50 && body.recommendedCap <= 500,
+    `${label} figures are both saveable ($50–$500), recommendation never below the minimum`,
+    body.minimumCap >= 50 &&
+      body.minimumCap <= 500 &&
+      body.recommendedCap >= body.minimumCap &&
+      body.recommendedCap <= 500,
     `min ${body.minimumCap}, recommended ${body.recommendedCap}`,
   );
 }
