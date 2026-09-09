@@ -1,5 +1,7 @@
 import { Hono } from "hono";
+import type { MiddlewareHandler } from "hono";
 import type { AppContext } from "../lib/context";
+import { requireAuth } from "../lib/context";
 import { seasonYear } from "../lib/env";
 import { pricingYearForLeague } from "../lib/pricing";
 
@@ -33,9 +35,17 @@ function toTeam(row: TeamRow) {
 
 export const teamRoutes = new Hono<AppContext>();
 
-teamRoutes.get("/", async (c) => {
+/** Browsing teams stays public; asking who owns them doesn't, since rosters belong to a
+ * private league. Only that lookup needs a session. */
+const authForOwnerLookup: MiddlewareHandler<AppContext> = async (c, next) => {
+  if (!c.req.query("leagueId")) return next();
+  return requireAuth(c, next);
+};
+
+teamRoutes.get("/", authForOwnerLookup, async (c) => {
   const search = c.req.query("search")?.trim() ?? "";
   const eventKey = c.req.query("eventKey")?.trim() ?? "";
+  const leagueId = c.req.query("leagueId")?.trim() ?? "";
   const limit = Math.min(Number.parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
   const offset = Math.max(Number.parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
   const year = seasonYear(c.env);
@@ -44,6 +54,30 @@ teamRoutes.get("/", async (c) => {
   const pricingYear = eventKey
     ? await pricingYearForLeague(c.env.DB, { league_type: "single_event", event_key: eventKey, season_year: year })
     : year - 1;
+
+  // A whole league's picks is at most maxMembers × rosterSize rows, so fetching them all
+  // and matching in memory beats joining them onto the paged team query.
+  const owners = new Map<string, { userId: string; rosterName: string }>();
+  if (leagueId) {
+    const member = await c.env.DB.prepare(
+      "SELECT user_id FROM league_members WHERE league_id = ? AND user_id = ?",
+    )
+      .bind(leagueId, c.get("user").id)
+      .first<{ user_id: string }>();
+    if (!member) return c.json({ error: "You're not in that league" }, 403);
+
+    const { results: picks } = await c.env.DB.prepare(
+      `SELECT d.team_key, d.user_id, m.roster_name
+       FROM draft_picks d
+       JOIN league_members m ON m.league_id = d.league_id AND m.user_id = d.user_id
+       WHERE d.league_id = ?`,
+    )
+      .bind(leagueId)
+      .all<{ team_key: string; user_id: string; roster_name: string }>();
+    for (const pick of picks) {
+      owners.set(pick.team_key, { userId: pick.user_id, rosterName: pick.roster_name });
+    }
+  }
 
   const conditions: string[] = [];
   const bindings: unknown[] = [pricingYear];
@@ -70,7 +104,11 @@ teamRoutes.get("/", async (c) => {
     .bind(...bindings, limit, offset)
     .all<TeamRow>();
 
-  return c.json({ teams: results.map(toTeam), limit, offset });
+  const teams = results.map((row) =>
+    leagueId ? { ...toTeam(row), owner: owners.get(row.team_key) ?? null } : toTeam(row),
+  );
+
+  return c.json({ teams, limit, offset });
 });
 
 teamRoutes.get("/:teamKey", async (c) => {

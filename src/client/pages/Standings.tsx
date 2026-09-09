@@ -94,7 +94,7 @@ export function Standings() {
 
       {standings.every((owner) => owner.points === 0) && (
         <p className="mb-4 rounded-md border border-edge bg-surface px-4 py-3 text-sm text-slate-600">
-          No results scored yet. Hit “Refresh from TBA” once your teams have played.
+          No results scored yet. Scores update on their own as your teams play.
         </p>
       )}
 

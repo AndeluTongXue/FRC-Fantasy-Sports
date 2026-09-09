@@ -3,9 +3,20 @@ import type { PricedTeam } from "../../shared/types";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 
+interface OwnedTeam extends PricedTeam {
+  owner?: { userId: string; rosterName: string } | null;
+}
+
+interface LeagueOption {
+  id: string;
+  name: string;
+}
+
 export function Teams() {
   const { user } = useAuth();
-  const [teams, setTeams] = useState<PricedTeam[]>([]);
+  const [teams, setTeams] = useState<OwnedTeam[]>([]);
+  const [leagues, setLeagues] = useState<LeagueOption[]>([]);
+  const [leagueId, setLeagueId] = useState("");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -15,23 +26,34 @@ export function Teams() {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    api
+      .get<{ leagues: LeagueOption[] }>("/leagues")
+      .then((data) => setLeagues(data.leagues))
+      .catch(() => setLeagues([]));
+  }, []);
+
+  const teamsQuery =
+    `/teams?limit=100&search=${encodeURIComponent(search)}` +
+    (leagueId ? `&leagueId=${encodeURIComponent(leagueId)}` : "");
+
+  useEffect(() => {
     const timer = setTimeout(() => {
       setLoading(true);
       api
-        .get<{ teams: PricedTeam[] }>(`/teams?limit=100&search=${encodeURIComponent(search)}`)
+        .get<{ teams: OwnedTeam[] }>(teamsQuery)
         .then((data) => setTeams(data.teams))
         .catch((caught) => setError(caught instanceof Error ? caught.message : "Failed to load teams"))
         .finally(() => setLoading(false));
     }, 200);
     return () => clearTimeout(timer);
-  }, [search]);
+  }, [teamsQuery]);
 
   async function syncTeams() {
     setSyncing(true);
     setError("");
     try {
       await api.post("/admin/sync/teams");
-      const data = await api.get<{ teams: PricedTeam[] }>("/teams?limit=100");
+      const data = await api.get<{ teams: OwnedTeam[] }>(teamsQuery);
       setTeams(data.teams);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Sync failed");
@@ -54,7 +76,7 @@ export function Teams() {
     try {
       const path = priceYear.trim() ? `/admin/price-teams?year=${encodeURIComponent(priceYear.trim())}` : "/admin/price-teams";
       const result = await api.post<{ priced: number; epaYear: number }>(path);
-      const data = await api.get<{ teams: PricedTeam[] }>(`/teams?limit=100&search=${encodeURIComponent(search)}`);
+      const data = await api.get<{ teams: OwnedTeam[] }>(teamsQuery);
       setTeams(data.teams);
       setPriceMessage(`Priced ${result.priced} teams from ${result.epaYear} Statbotics EPA.`);
     } catch (caught) {
@@ -74,6 +96,20 @@ export function Teams() {
           placeholder="Search by number or nickname…"
           className="flex-1 rounded-md border border-edge bg-surface px-3 py-2 text-sm outline-none focus:border-sky-500 sm:max-w-xs"
         />
+        {leagues.length > 0 && (
+          <select
+            value={leagueId}
+            onChange={(event) => setLeagueId(event.target.value)}
+            className="rounded-md border border-edge bg-surface px-3 py-2 text-sm outline-none focus:border-sky-500"
+          >
+            <option value="">No league</option>
+            {leagues.map((league) => (
+              <option key={league.id} value={league.id}>
+                {league.name}
+              </option>
+            ))}
+          </select>
+        )}
         {user?.isAdmin && (
           <>
             <button
@@ -134,6 +170,7 @@ export function Teams() {
                 <th className="px-4 py-2 font-medium">Team</th>
                 <th className="px-4 py-2 font-medium">Name</th>
                 <th className="px-4 py-2 font-medium">Location</th>
+                {leagueId && <th className="px-4 py-2 font-medium">Owner</th>}
                 <th className="px-4 py-2 text-right font-medium">Price</th>
               </tr>
             </thead>
@@ -145,6 +182,17 @@ export function Teams() {
                   <td className="px-4 py-2 text-slate-600">
                     {[team.city, team.stateProv, team.country].filter(Boolean).join(", ") || "—"}
                   </td>
+                  {leagueId && (
+                    <td className="px-4 py-2">
+                      {team.owner ? (
+                        <span className={team.owner.userId === user?.id ? "font-medium text-sky-600" : undefined}>
+                          {team.owner.rosterName}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">Undrafted</span>
+                      )}
+                    </td>
+                  )}
                   <td className="px-4 py-2 text-right font-mono">
                     {team.price === null ? <span className="text-slate-400">—</span> : `$${team.price}`}
                   </td>
